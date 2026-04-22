@@ -1,73 +1,87 @@
-# Pixly - Professional Pixel Art Editor
+# 🎨 Pixly - Professional Pixel Art & Animation Editor
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Pixly is a powerful, web-based (and desktop-ready) pixel art editor designed for creators who need precision, layering, and advanced animation tools. Built with a focus on high-performance rendering and a premium user experience.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## ✨ Key Features
 
-## React Compiler
+### 🖌️ Professional Drawing Tools
+- **Advanced Brushes:** Brush, Eraser, and Paint Bucket.
+- **Geometry Tools:** Draw perfect Lines, Rectangles, and Circles.
+- **Pixel-Perfect Accuracy:** Real-time grid snapping and coordinate tracking.
+- **Eyedropper:** Quickly sample colors from any layer.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 📚 Layer-Based Architecture
+- **Non-Destructive Editing:** Work with multiple layers to isolate different parts of your art.
+- **Independent Transforms:** Every layer has its own `X/Y` position, `Rotation`, and `Scale`.
+- **Multi-Layer Selection:** Select and transform multiple layers simultaneously for complex movements.
+- **Layer Management:** Toggle visibility, adjust opacity, and delete layers with ease.
 
-## Expanding the ESLint configuration
+### 🎞️ Powerful Animation System
+- **Frame-by-Frame Control:** Easily add, duplicate, and manage animation frames.
+- **Onion Skinning:** View previous frames as a ghost overlay to ensure smooth motion.
+- **Variable Duration:** Set custom timing for each individual frame.
+- **Real-Time Preview:** Play back your animation directly in the workspace.
+- **GIF Export:** Export your creations as high-quality animated GIFs.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### 🚀 Modern UI/UX
+- **Smooth Navigation:** Pan and zoom the canvas with fluid responsiveness.
+- **Premium Aesthetics:** Sleek dark mode, modern typography (Outfit), and intuitive toolbars.
+- **Cross-Platform:** Runs in any modern browser or as a native desktop application via Tauri.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+---
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## 🛠️ Technology Stack
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+- **Frontend:** [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/)
+- **Build Tool:** [Vite](https://vitejs.dev/)
+- **Desktop Bridge:** [Tauri v2](https://tauri.app/)
+- **Icons:** [Lucide React](https://lucide.dev/)
+- **Styling:** Custom Vanilla CSS (Premium design system)
+
+---
+
+## 🚦 Getting Started
+
+### 📦 Installation
+```bash
+# Clone the repository
+git clone https://github.com/tnnkhoa3006/Pixly.git
+
+# Navigate to the project directory
+cd Pixly
+
+# Install dependencies
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 💻 Development
+#### Web Version
+```bash
+npm run dev
 ```
+
+#### Desktop Version (Tauri)
+```bash
+npm run tauri:dev
+```
+
+### 🏗️ Build
+#### Web Production
+```bash
+npm run build
+```
+
+#### Desktop Binary
+```bash
+npm run tauri:build
+```
+
+---
+
+## 📜 License
+This project is licensed under the MIT License.
+
+---
+Made with ❤️ for pixel artists everywhere.
