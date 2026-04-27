@@ -7,6 +7,7 @@ import { exportGif } from './utils/gifExport';
 import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './utils/drawing';
 import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform } from './utils';
 import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform } from './types';
+import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
 
 import { 
   Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle, 
@@ -1133,8 +1134,82 @@ export default function App() {
     ? (pickerHoverColor ? `Pick: ${pickerHoverColor.toUpperCase()}` : 'Pick: empty pixel')
     : null;
 
+  const menuConfig: MenuConfig = [
+    {
+      label: 'File',
+      items: [
+        { label: 'New', shortcut: 'Ctrl+N', action: 'newFile' },
+        { type: 'separator' },
+        { label: 'Export GIF', shortcut: 'Ctrl+E', action: 'exportGif' }
+      ]
+    },
+    {
+      label: 'Edit',
+      items: [
+        { label: 'Undo', shortcut: 'Ctrl+Z', action: 'undo', disabled: !canUndo },
+        { label: 'Redo', shortcut: 'Ctrl+Y', action: 'redo', disabled: !canRedo },
+        { type: 'separator' },
+        { label: 'Clear Canvas', action: 'clearCanvas' }
+      ]
+    },
+    {
+      label: 'View',
+      items: [
+        { label: showGrid ? 'Hide Grid' : 'Show Grid', action: 'toggleGrid' },
+        { label: onionSkinEnabled ? 'Disable Onion Skin' : 'Enable Onion Skin', action: 'toggleOnionSkin' },
+        { type: 'separator' },
+        { 
+          label: 'Grid Size',
+          items: [
+            { label: '16x16', action: 'setGrid16' },
+            { label: '32x32', action: 'setGrid32' },
+            { label: '64x64', action: 'setGrid64' },
+            { label: '128x128', action: 'setGrid128' },
+          ]
+        }
+      ]
+    },
+    {
+      label: 'Animation',
+      items: [
+        { label: 'Play/Pause', shortcut: 'Space', action: 'togglePlay' },
+        { type: 'separator' },
+        { label: 'Add Frame', action: 'addFrame' },
+        { label: 'Duplicate Frame', action: 'duplicateFrame' },
+        { label: 'Delete Frame', action: 'deleteFrame', disabled: frames.length <= 1 }
+      ]
+    },
+    {
+      label: 'Help',
+      items: [
+        { label: 'About', action: 'about' }
+      ]
+    }
+  ];
+
+  const actions: ActionMap = {
+    newFile: () => handleGridSizeChange(gridSize),
+    exportGif: handleExportGif,
+    undo: handleUndo,
+    redo: handleRedo,
+    clearCanvas: () => handleGridSizeChange(gridSize),
+    toggleGrid: () => setShowGrid(!showGrid),
+    toggleOnionSkin: () => setOnionSkinEnabled(!onionSkinEnabled),
+    setGrid16: () => handleGridSizeChange(16),
+    setGrid32: () => handleGridSizeChange(32),
+    setGrid64: () => handleGridSizeChange(64),
+    setGrid128: () => handleGridSizeChange(128),
+    // @ts-ignore
+    togglePlay: () => togglePlay(activeFrameIndex),
+    addFrame: handleAddFrame,
+    duplicateFrame: handleDuplicateFrame,
+    deleteFrame: handleDeleteFrame,
+    about: () => window.alert('Pixly - Professional Pixel Art Editor\nBuilt with React & TailwindCSS')
+  };
+
   return (
     <div className="layout">
+      <MenuBar config={menuConfig} actions={actions} />
       {isPlaying && <div className="playback-badge">PLAYING</div>}
       <div className="workspace">
         <div className="sidebar">

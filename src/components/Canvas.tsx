@@ -50,8 +50,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     const logicalH = gs * ps;
     const ratio = window.devicePixelRatio || 1;
 
-    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+    // Adaptive opacity based on zoom level
+    const normalizedZoom = Math.max(0, Math.min(1, (ps - 8) / 24));
+    const opacity = 0.1 + normalizedZoom * 0.15;
+    
+    ctx.strokeStyle = `rgba(128, 128, 128, ${opacity.toFixed(2)})`;
     ctx.lineWidth = 1 / ratio;
+    ctx.setLineDash([1, 3]);
+
     ctx.beginPath();
     for (let i = 0; i <= gs; i++) {
       const pos = i * ps;
@@ -61,6 +67,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
       ctx.lineTo(logicalW, pos);
     }
     ctx.stroke();
+    ctx.setLineDash([]);
   };
 
   const applyTransform = (ctx: CanvasRenderingContext2D, transform: LayerTransform, gs: number, ps: number) => {
@@ -114,10 +121,15 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     const logicalW = gs * ps;
     const logicalH = gs * ps;
 
-    // 1. Clear
+    // 1. Clear and draw Checkerboard
     ctx.clearRect(0, 0, logicalW, logicalH);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, logicalW, logicalH);
+    for (let y = 0; y < gs; y++) {
+      for (let x = 0; x < gs; x++) {
+        const isDark = (x + y) % 2 === 0;
+        ctx.fillStyle = isDark ? '#e5e5e5' : '#ffffff';
+        ctx.fillRect(x * ps, y * ps, ps, ps);
+      }
+    }
 
     // 2. Onion skin (previous frame at low opacity)
     if (onionFrame) {
@@ -155,7 +167,6 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
       ref={canvasRef}
       style={{
         display: 'block',
-        backgroundColor: '#ffffff',
         boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
         touchAction: 'none',
       }}
