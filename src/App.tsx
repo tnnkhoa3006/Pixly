@@ -12,8 +12,8 @@ import { autoSaveProject, addRecentFile } from './utils/autoSave';
 import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData } from './types';
 import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
 
-import { 
-  Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle, 
+import {
+  Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle,
   Move, Undo, Redo, Eye, EyeOff, Plus, Trash2, Video, Film, Grid3X3,
   CheckSquare
 } from 'lucide-react';
@@ -129,7 +129,7 @@ export default function App() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [gridSize, setGridSize] = useState<GridSizeType>(16);
   const [pixelSize, setPixelSize] = useState(32);
-  const [showGrid, setShowGrid] = useState(true);
+  const [showGrid, setShowGrid] = useState(false);
   const [brushSize, setBrushSize] = useState<number>(1);
   const [onionSkinEnabled, setOnionSkinEnabled] = useState(false);
   const [animationMode, setAnimationMode] = useState(false);
@@ -166,7 +166,7 @@ export default function App() {
   const selectedTransformLayers = layers.filter(layer => selectedLayerIds.includes(layer.id));
   const frameTransformTool = animationMode && isFrameTransformTool(currentTool) ? currentTool : null;
   const transformGuideSize = gridSize * pixelSize;
-  
+
   const canvasRef = useRef<CanvasHandle>(null);
   const previewCanvasRef = useRef<PreviewCanvasHandle>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -225,8 +225,8 @@ export default function App() {
   // Render on state change
   useEffect(() => {
     if (canvasRef.current && frames[activeFrameIndex]) {
-      const onionFrame = (onionSkinEnabled && activeFrameIndex > 0 && !isPlaying) 
-        ? frames[activeFrameIndex - 1] 
+      const onionFrame = (onionSkinEnabled && activeFrameIndex > 0 && !isPlaying)
+        ? frames[activeFrameIndex - 1]
         : null;
       // Use requestAnimationFrame to ensure Canvas.tsx's internal resize effect runs first
       requestAnimationFrame(() => {
@@ -387,7 +387,7 @@ export default function App() {
       if (!rect) return;
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-      
+
       let newSize = pixelSize;
       if (e.deltaY < 0) {
         newSize = Math.min(Math.round(pixelSize + 4), 64);
@@ -494,7 +494,7 @@ export default function App() {
         isSpaceDown.current = true;
         setIsSpacePressed(true);
       }
-      
+
       const key = e.key.toLowerCase();
 
       // File shortcuts
@@ -1101,9 +1101,9 @@ export default function App() {
       const frame = { ...prev.frames[prev.activeFrameIndex], layers: nextLayers };
       const nextFrames = [...prev.frames];
       nextFrames[prev.activeFrameIndex] = frame;
-      const nextState = { 
-        ...prev, 
-        frames: nextFrames, 
+      const nextState = {
+        ...prev,
+        frames: nextFrames,
         activeLayerId: nextLayers[nextLayers.length - 1].id,
         selectedLayerIds: [nextLayers[nextLayers.length - 1].id]
       };
@@ -1121,13 +1121,13 @@ export default function App() {
       nextFrames[prev.activeFrameIndex] = frame;
       let nextLayerId = prev.activeLayerId;
       if (nextLayerId === id) nextLayerId = nextLayers[nextLayers.length - 1].id;
-      
+
       const nextSelected = (prev.selectedLayerIds || [prev.activeLayerId]).filter(lid => lid !== id);
       if (nextSelected.length === 0) nextSelected.push(nextLayerId);
 
-      const nextState = { 
-        ...prev, 
-        frames: nextFrames, 
+      const nextState = {
+        ...prev,
+        frames: nextFrames,
         activeLayerId: nextLayerId,
         selectedLayerIds: nextSelected
       };
@@ -1157,7 +1157,7 @@ export default function App() {
       } else {
         nextSelected = [...prev.selectedLayerIds, id];
       }
-      
+
       // If we deselected the active layer, pick a new active layer from selection
       let nextActive = prev.activeLayerId;
       if (id === prev.activeLayerId && isSelected) {
@@ -1173,14 +1173,14 @@ export default function App() {
     setAnimState(prev => {
       if (isMulti) {
         const isSelected = prev.selectedLayerIds.includes(id);
-        const nextSelected = isSelected 
+        const nextSelected = isSelected
           ? (prev.selectedLayerIds.length > 1 ? prev.selectedLayerIds.filter(lid => lid !== id) : prev.selectedLayerIds)
           : [...prev.selectedLayerIds, id];
-        
+
         let nextActive = prev.activeLayerId;
         if (!isSelected) nextActive = id;
         else if (id === prev.activeLayerId && nextSelected.length > 0) nextActive = nextSelected[0];
-        
+
         return { ...prev, selectedLayerIds: nextSelected, activeLayerId: nextActive };
       } else {
         return { ...prev, activeLayerId: id, selectedLayerIds: [id] };
@@ -1266,8 +1266,8 @@ export default function App() {
     }
   ];
 
-  const fileName = currentFilePath 
-    ? currentFilePath.split(/[/\\]/).pop() || 'Untitled' 
+  const fileName = currentFilePath
+    ? currentFilePath.split(/[/\\]/).pop() || 'Untitled'
     : 'Untitled';
   const titleSuffix = isDirty ? ' •' : '';
 
@@ -1360,16 +1360,16 @@ export default function App() {
           <button className={`tool-icon-btn ${currentTool === 'line' ? 'active' : ''}`} onClick={() => activateTool('line')} title="Line (L)"><Minus size={20} /></button>
           <button className={`tool-icon-btn ${currentTool === 'rect' ? 'active' : ''}`} onClick={() => activateTool('rect')} title="Rectangle (R)"><Square size={20} /></button>
           <button className={`tool-icon-btn ${currentTool === 'circle' ? 'active' : ''}`} onClick={() => activateTool('circle')} title="Circle (C)"><Circle size={20} /></button>
-          
+
           <div className="tool-separator" />
-          
+
           {/* Frame motion tools */}
           <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-move' ? 'active' : ''}`} onClick={() => activateTool('frame-move')} disabled={!animationMode} title="Move Selection"><Move size={20} /></button>
           <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-rotate' ? 'active' : ''}`} onClick={() => activateTool('frame-rotate')} disabled={!animationMode} title="Rotate Selection (drag around center)"><RefreshCwIcon size={20} /></button>
           <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-scale' ? 'active' : ''}`} onClick={() => activateTool('frame-scale')} disabled={!animationMode} title="Scale Selection (drag toward or away from center)"><MaximizeIcon size={20} /></button>
 
           <div className="tool-separator" />
-          
+
           <button className={`tool-icon-btn ${animationMode ? 'active' : ''}`} onClick={() => {
             const nextMode = !animationMode;
             setAnimationMode(nextMode);
@@ -1377,7 +1377,7 @@ export default function App() {
               activateTool('brush');
             }
           }} title="Toggle Animation Mode"><Film size={20} /></button>
-          
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
             {[1, 2, 3, 4, 5].map(size => (
               <button key={size} className={`tool-icon-btn ${brushSize === size ? 'active' : ''}`} style={{ width: 28, height: 28, fontSize: 12, minHeight: 28 }} onClick={() => setBrushSize(size)}>{size}</button>
@@ -1385,14 +1385,14 @@ export default function App() {
           </div>
 
           <div style={{ flex: 1 }} />
-          
+
           <button className="tool-icon-btn" onClick={handleUndo} disabled={!canUndo}><Undo size={20} /></button>
           <button className="tool-icon-btn" onClick={handleRedo} disabled={!canRedo}><Redo size={20} /></button>
           <button className="tool-icon-btn" style={{ color: animationMode ? '#10b981' : undefined }} disabled={!animationMode} onClick={handleExportGif} title="Export GIF"><Video size={20} /></button>
         </div>
 
         <div className="main">
-          <div 
+          <div
             ref={containerRef}
             style={{ width: '100%', height: '100%', position: 'relative', cursor: canvasCursor }}
             onPointerDown={handlePointerDown}
@@ -1497,29 +1497,29 @@ export default function App() {
         <div className="right-sidebar">
           <div className="right-sidebar-header">
             <span>Layers</span>
-            <button className="tool-icon-btn" style={{ width: 28, height: 28 }} onClick={addLayer}><Plus size={16}/></button>
+            <button className="tool-icon-btn" style={{ width: 28, height: 28 }} onClick={addLayer}><Plus size={16} /></button>
           </div>
           <div className="layer-list">
             {[...layers].reverse().map(layer => {
               const isSelected = selectedLayerIds.includes(layer.id);
               const isActive = activeLayerId === layer.id;
               return (
-                <div 
-                  key={layer.id} 
-                  className={`layer-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}`} 
+                <div
+                  key={layer.id}
+                  className={`layer-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
                   onClick={(e) => handleLayerClick(layer.id, e)}
                 >
                   <div className="layer-item-top">
-                    <button 
-                      className={`layer-btn ${layer.visible ? 'eye-active' : ''}`} 
+                    <button
+                      className={`layer-btn ${layer.visible ? 'eye-active' : ''}`}
                       onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}
                       title="Toggle Visibility"
                     >
                       {layer.visible ? <Eye size={16} /> : <EyeOff size={16} />}
                     </button>
-                    
-                    <button 
-                      className={`layer-btn ${isSelected ? 'select-active' : ''}`} 
+
+                    <button
+                      className={`layer-btn ${isSelected ? 'select-active' : ''}`}
                       onClick={(e) => { e.stopPropagation(); toggleLayerSelection(layer.id); }}
                       title="Toggle Selection for Transform"
                     >
@@ -1527,7 +1527,7 @@ export default function App() {
                     </button>
 
                     <span className="layer-name">{layer.name}</span>
-                    
+
                     <button className="layer-btn" onClick={(e) => { e.stopPropagation(); deleteLayer(layer.id); }} disabled={layers.length <= 1}>
                       <Trash2 size={16} />
                     </button>
@@ -1540,9 +1540,9 @@ export default function App() {
       </div>
 
       {animationMode && (
-        <Timeline 
-          frames={frames} 
-          activeFrameIndex={activeFrameIndex} 
+        <Timeline
+          frames={frames}
+          activeFrameIndex={activeFrameIndex}
           gridSize={gridSize}
           isPlaying={isPlaying}
           onionSkinEnabled={onionSkinEnabled}

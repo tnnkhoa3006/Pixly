@@ -42,21 +42,32 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
 
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.imageSmoothingEnabled = false;
+
+    // Apply a clean CSS checkerboard background to eliminate "seams" between pixels
+    const bgSize = ps * 2;
+    canvas.style.backgroundImage = `
+      linear-gradient(45deg, #e5e5e5 25%, transparent 25%),
+      linear-gradient(-45deg, #e5e5e5 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #e5e5e5 75%),
+      linear-gradient(-45deg, transparent 75%, #e5e5e5 75%)
+    `;
+    canvas.style.backgroundSize = `${bgSize}px ${bgSize}px`;
+    canvas.style.backgroundPosition = `0 0, 0 ${ps}px, ${ps}px -${ps}px, -${ps}px 0px`;
+    canvas.style.backgroundColor = 'white';
   };
 
   const drawGrid = (ctx: CanvasRenderingContext2D) => {
     const { gridSize: gs, pixelSize: ps } = propsRef.current;
+    if (ps < 12) return; // Only show grid when zoomed in enough
+
     const logicalW = gs * ps;
     const logicalH = gs * ps;
     const ratio = window.devicePixelRatio || 1;
 
-    // Adaptive opacity based on zoom level
-    const normalizedZoom = Math.max(0, Math.min(1, (ps - 8) / 24));
-    const opacity = 0.1 + normalizedZoom * 0.15;
-    
-    ctx.strokeStyle = `rgba(128, 128, 128, ${opacity.toFixed(2)})`;
+    // Very subtle solid lines
+    ctx.strokeStyle = `rgba(0, 0, 0, 0.1)`;
     ctx.lineWidth = 1 / ratio;
-    ctx.setLineDash([1, 3]);
+    ctx.setLineDash([]); 
 
     ctx.beginPath();
     for (let i = 0; i <= gs; i++) {
@@ -67,7 +78,6 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
       ctx.lineTo(logicalW, pos);
     }
     ctx.stroke();
-    ctx.setLineDash([]);
   };
 
   const applyTransform = (ctx: CanvasRenderingContext2D, transform: LayerTransform, gs: number, ps: number) => {
@@ -93,22 +103,38 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
   };
 
   const renderLayers = (ctx: CanvasRenderingContext2D, layers: Layer[], gs: number, ps: number) => {
+    // Create an offscreen buffer at 1:1 scale to avoid seams between pixels
+    const buffer = document.createElement('canvas');
+    buffer.width = gs;
+    buffer.height = gs;
+    const bCtx = buffer.getContext('2d');
+    if (!bCtx) return;
+
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i];
       if (!layer.visible) continue;
 
       ctx.save();
+      // Apply transform in screen-space
       applyTransform(ctx, layer.transform, gs, ps);
       ctx.globalAlpha = layer.opacity;
+
+      // Draw pixels to the 1:1 buffer
+      bCtx.clearRect(0, 0, gs, gs);
       for (let y = 0; y < gs; y++) {
         for (let x = 0; x < gs; x++) {
           const color = layer.grid[y]?.[x];
           if (color) {
-            ctx.fillStyle = color;
-            ctx.fillRect(x * ps, y * ps, ps, ps);
+            bCtx.fillStyle = color;
+            bCtx.fillRect(x, y, 1, 1);
           }
         }
       }
+
+      // Draw the buffer to the main canvas scaled up
+      // imageSmoothingEnabled = false is already set on the main ctx in setupCanvas
+      ctx.drawImage(buffer, 0, 0, gs, gs, 0, 0, gs * ps, gs * ps);
+      
       ctx.restore();
     }
   };
@@ -121,15 +147,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     const logicalW = gs * ps;
     const logicalH = gs * ps;
 
-    // 1. Clear and draw Checkerboard
+    // 1. Clear (checkerboard is now handled by CSS background)
     ctx.clearRect(0, 0, logicalW, logicalH);
-    for (let y = 0; y < gs; y++) {
-      for (let x = 0; x < gs; x++) {
-        const isDark = (x + y) % 2 === 0;
-        ctx.fillStyle = isDark ? '#e5e5e5' : '#ffffff';
-        ctx.fillRect(x * ps, y * ps, ps, ps);
-      }
-    }
 
     // 2. Onion skin (previous frame at low opacity)
     if (onionFrame) {
