@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { MenuConfig, ActionMap } from './types';
 import { Menu } from './Menu';
 

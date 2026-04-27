@@ -2,11 +2,14 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import Canvas, { type CanvasHandle } from './components/Canvas';
 import PreviewCanvas, { type PreviewTool, type PreviewCanvasHandle } from './components/PreviewCanvas';
 import Timeline from './components/Timeline';
+import WelcomeScreen from './components/WelcomeScreen';
 import { usePlayback } from './hooks/usePlayback';
 import { exportGif } from './utils/gifExport';
 import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './utils/drawing';
 import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform } from './utils';
-import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform } from './types';
+import { saveProjectAs, saveProjectToPath, openProjectFile } from './utils/projectFile';
+import { autoSaveProject, addRecentFile } from './utils/autoSave';
+import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData } from './types';
 import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
 
 import { 
@@ -123,6 +126,7 @@ const buildTransformHud = (
 };
 
 export default function App() {
+  const [showWelcome, setShowWelcome] = useState(true);
   const [gridSize, setGridSize] = useState<GridSizeType>(16);
   const [pixelSize, setPixelSize] = useState(32);
   const [showGrid, setShowGrid] = useState(true);
@@ -134,6 +138,11 @@ export default function App() {
   const [redoStack, setRedoStack] = useState<AnimationState[]>([]);
   const canUndo = undoStack.length > 0;
   const canRedo = redoStack.length > 0;
+
+  // --- File state ---
+  const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- SINGLE SOURCE OF TRUTH ---
   const [animState, setAnimState] = useState<AnimationState>(() => {
@@ -356,24 +365,6 @@ export default function App() {
     });
   };
 
-  const handleGridSizeChange = (newSize: GridSizeType) => {
-    if (window.confirm(`Changing grid size to ${newSize}x${newSize} will clear your current canvas. Continue?`)) {
-      pushUndoSnapshot(animState);
-      setGridSize(newSize);
-      const defaultFrame = createDefaultFrame(newSize);
-      setAnimState({
-        frames: [defaultFrame],
-        activeFrameIndex: 0,
-        activeLayerId: defaultFrame.layers[0].id,
-        selectedLayerIds: [defaultFrame.layers[0].id]
-      });
-      panRef.current = { x: 0, y: 0 };
-      if (transformContainerRef.current) {
-        transformContainerRef.current.style.transform = `translate(0px, 0px)`;
-      }
-    }
-  };
-
   // --- Zoom / Pan ---
   const handleZoomCenter = (newPixelSize: number, mouseX: number, mouseY: number) => {
     setPixelSize(oldPixelSize => {
@@ -410,7 +401,88 @@ export default function App() {
     const div = containerRef.current;
     div?.addEventListener('wheel', handleWheel, { passive: false });
     return () => div?.removeEventListener('wheel', handleWheel);
-  }, [pixelSize]);
+  }, [pixelSize, showWelcome]);
+
+  // --- File Operations ---
+  const handleSave = useCallback(async () => {
+    if (currentFilePath) {
+      try {
+        await saveProjectToPath(currentFilePath, gridSize, animState, currentColor, currentTool);
+        setIsDirty(false);
+        addRecentFile(currentFilePath, gridSize);
+      } catch (err) {
+        alert(`Save failed: ${(err as Error).message}`);
+      }
+    } else {
+      handleSaveAs();
+    }
+  }, [currentFilePath, gridSize, animState, currentColor, currentTool]);
+
+  const handleSaveAs = useCallback(async () => {
+    try {
+      const path = await saveProjectAs(gridSize, animState, currentColor, currentTool);
+      if (path && path !== 'web-download') {
+        setCurrentFilePath(path);
+        setIsDirty(false);
+        addRecentFile(path, gridSize);
+      }
+    } catch (err) {
+      alert(`Save failed: ${(err as Error).message}`);
+    }
+  }, [gridSize, animState, currentColor, currentTool]);
+
+  const handleOpenFile = useCallback(async () => {
+    if (isDirty && !window.confirm('You have unsaved changes. Continue?')) return;
+    try {
+      const result = await openProjectFile();
+      if (result) {
+        loadProjectData(result.data, result.filePath);
+      }
+    } catch (err) {
+      alert(`Open failed: ${(err as Error).message}`);
+    }
+  }, [isDirty]);
+
+  const loadProjectData = (data: ProjectData, filePath: string) => {
+    setGridSize(data.canvas.width);
+    setAnimState(data.animState);
+    setCurrentColor(data.currentColor);
+    setCurrentTool(data.currentTool);
+    setCurrentFilePath(filePath);
+    setIsDirty(false);
+    setUndoStack([]);
+    setRedoStack([]);
+    setShowWelcome(false);
+    panRef.current = { x: 0, y: 0 };
+    if (transformContainerRef.current) {
+      transformContainerRef.current.style.transform = `translate(0px, 0px)`;
+    }
+    addRecentFile(filePath, data.canvas.width);
+  };
+
+  // --- Auto-save (debounce 5s) ---
+  useEffect(() => {
+    if (showWelcome) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveProject(gridSize, animState, currentColor, currentTool).catch(console.error);
+    }, 5000);
+    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
+  }, [animState, gridSize, currentColor, currentTool, showWelcome]);
+
+  // --- Mark dirty on edits ---
+  useEffect(() => {
+    if (!showWelcome) setIsDirty(true);
+  }, [animState]);
+
+  // --- Prompt before close ---
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty) { e.preventDefault(); }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
 
   // --- Keyboard ---
   useEffect(() => {
@@ -424,6 +496,19 @@ export default function App() {
       }
       
       const key = e.key.toLowerCase();
+
+      // File shortcuts
+      if ((e.ctrlKey || e.metaKey) && key === 's') {
+        e.preventDefault();
+        if (e.shiftKey) { handleSaveAs(); } else { handleSave(); }
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && key === 'o') {
+        e.preventDefault();
+        handleOpenFile();
+        return;
+      }
+
       if (!isPlaying) {
         if (key === 'b') activateTool('brush');
         if (key === 'e') activateTool('eraser');
@@ -432,7 +517,7 @@ export default function App() {
         if (key === 'l') activateTool('line');
         if (key === 'r') activateTool('rect');
         if (key === 'c') activateTool('circle');
-        if (key === 's') activateTool('select');
+        if (key === 's' && !(e.ctrlKey || e.metaKey)) activateTool('select');
         if (key === 'm') activateTool('move');
       }
 
@@ -454,7 +539,7 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activateTool, handleRedo, handleUndo, isPlaying]);
+  }, [activateTool, handleRedo, handleUndo, handleSave, handleSaveAs, handleOpenFile, isPlaying]);
 
   // --- Drawing logic ---
   const getPointerPosition = (e: React.PointerEvent) => {
@@ -1138,7 +1223,11 @@ export default function App() {
     {
       label: 'File',
       items: [
-        { label: 'New', shortcut: 'Ctrl+N', action: 'newFile' },
+        { label: 'New Project', shortcut: 'Ctrl+N', action: 'newFile' },
+        { label: 'Open…', shortcut: 'Ctrl+O', action: 'openFile' },
+        { type: 'separator' },
+        { label: 'Save', shortcut: 'Ctrl+S', action: 'save' },
+        { label: 'Save As…', shortcut: 'Ctrl+Shift+S', action: 'saveAs' },
         { type: 'separator' },
         { label: 'Export GIF', shortcut: 'Ctrl+E', action: 'exportGif' }
       ]
@@ -1157,16 +1246,6 @@ export default function App() {
       items: [
         { label: showGrid ? 'Hide Grid' : 'Show Grid', action: 'toggleGrid' },
         { label: onionSkinEnabled ? 'Disable Onion Skin' : 'Enable Onion Skin', action: 'toggleOnionSkin' },
-        { type: 'separator' },
-        { 
-          label: 'Grid Size',
-          items: [
-            { label: '16x16', action: 'setGrid16' },
-            { label: '32x32', action: 'setGrid32' },
-            { label: '64x64', action: 'setGrid64' },
-            { label: '128x128', action: 'setGrid128' },
-          ]
-        }
       ]
     },
     {
@@ -1187,25 +1266,83 @@ export default function App() {
     }
   ];
 
+  const fileName = currentFilePath 
+    ? currentFilePath.split(/[/\\]/).pop() || 'Untitled' 
+    : 'Untitled';
+  const titleSuffix = isDirty ? ' •' : '';
+
   const actions: ActionMap = {
-    newFile: () => handleGridSizeChange(gridSize),
+    newFile: () => setShowWelcome(true),
+    openFile: () => handleOpenFile(),
+    save: () => handleSave(),
+    saveAs: () => handleSaveAs(),
     exportGif: handleExportGif,
     undo: handleUndo,
     redo: handleRedo,
-    clearCanvas: () => handleGridSizeChange(gridSize),
+    clearCanvas: () => {
+      if (window.confirm('Clear the entire canvas? This cannot be undone.')) {
+        pushUndoSnapshot(animState);
+        const defaultFrame = createDefaultFrame(gridSize);
+        setAnimState({
+          frames: [defaultFrame],
+          activeFrameIndex: 0,
+          activeLayerId: defaultFrame.layers[0].id,
+          selectedLayerIds: [defaultFrame.layers[0].id]
+        });
+      }
+    },
     toggleGrid: () => setShowGrid(!showGrid),
     toggleOnionSkin: () => setOnionSkinEnabled(!onionSkinEnabled),
-    setGrid16: () => handleGridSizeChange(16),
-    setGrid32: () => handleGridSizeChange(32),
-    setGrid64: () => handleGridSizeChange(64),
-    setGrid128: () => handleGridSizeChange(128),
     // @ts-ignore
     togglePlay: () => togglePlay(activeFrameIndex),
     addFrame: handleAddFrame,
     duplicateFrame: handleDuplicateFrame,
     deleteFrame: handleDeleteFrame,
-    about: () => window.alert('Pixly - Professional Pixel Art Editor\nBuilt with React & TailwindCSS')
+    about: () => window.alert('Pixly - Professional Pixel Art Editor\nv0.1.0 · Built with React & Tauri')
   };
+
+  // --- Welcome Screen ---
+  if (showWelcome) {
+    return (
+      <WelcomeScreen
+        onNewProject={(size) => {
+          setGridSize(size);
+          const defaultFrame = createDefaultFrame(size);
+          setAnimState({
+            frames: [defaultFrame],
+            activeFrameIndex: 0,
+            activeLayerId: defaultFrame.layers[0].id,
+            selectedLayerIds: [defaultFrame.layers[0].id]
+          });
+          setCurrentFilePath(null);
+          setIsDirty(false);
+          setUndoStack([]);
+          setRedoStack([]);
+          setShowWelcome(false);
+          panRef.current = { x: 0, y: 0 };
+          if (transformContainerRef.current) {
+            transformContainerRef.current.style.transform = `translate(0px, 0px)`;
+          }
+        }}
+        onLoadProject={(data, filePath) => loadProjectData(data, filePath)}
+        onContinue={(data) => {
+          setGridSize(data.canvas.width);
+          setAnimState(data.animState);
+          setCurrentColor(data.currentColor);
+          setCurrentTool(data.currentTool);
+          setCurrentFilePath(null);
+          setIsDirty(false);
+          setUndoStack([]);
+          setRedoStack([]);
+          setShowWelcome(false);
+          panRef.current = { x: 0, y: 0 };
+          if (transformContainerRef.current) {
+            transformContainerRef.current.style.transform = `translate(0px, 0px)`;
+          }
+        }}
+      />
+    );
+  }
 
   return (
     <div className="layout">
@@ -1214,6 +1351,7 @@ export default function App() {
       <div className="workspace">
         <div className="sidebar">
           <div className="app-logo">Pixly</div>
+          <div style={{ fontSize: '10px', color: '#888', textAlign: 'center', padding: '0 4px', marginBottom: '2px', lineHeight: 1.2, wordBreak: 'break-all' }}>{fileName}{titleSuffix}</div>
           <div className="tool-separator" />
           <button className={`tool-icon-btn ${currentTool === 'brush' ? 'active' : ''}`} onClick={() => activateTool('brush')} title="Brush (B)"><Brush size={20} /></button>
           <button className={`tool-icon-btn ${currentTool === 'eraser' ? 'active' : ''}`} onClick={() => activateTool('eraser')} title="Eraser (E)"><Eraser size={20} /></button>
@@ -1441,16 +1579,7 @@ export default function App() {
           <button onClick={() => setShowGrid(!showGrid)} style={{ background: 'none', border: 'none', color: showGrid ? '#4f46e5' : '#aaa', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Toggle Grid">
             <Grid3X3 size={16} />
           </button>
-          <select 
-            value={gridSize} 
-            onChange={(e) => handleGridSizeChange(Number(e.target.value) as GridSizeType)}
-            style={{ background: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', padding: '2px 4px' }}
-          >
-            <option value={16}>16x16</option>
-            <option value={32}>32x32</option>
-            <option value={64}>64x64</option>
-            <option value={128}>128x128</option>
-          </select>
+          <span style={{ color: '#999', fontSize: '12px' }}>{gridSize}×{gridSize}</span>
         </div>
         <div className="bottom-bar-divider" />
         <div className="bottom-bar-section">

@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import { useRef } from 'react';
 import type { TopLevelMenu, ActionMap } from './types';
 import { MenuItem } from './MenuItem';
 

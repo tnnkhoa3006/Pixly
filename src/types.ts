@@ -34,4 +34,14 @@ export type ToolType =
   | 'line' | 'rect' | 'circle' | 'select' | 'move'
   | 'frame-move' | 'frame-rotate' | 'frame-scale';
 
-export type GridSizeType = 16 | 32 | 64 | 128;
+export type GridSizeType = number;
+
+/** Serialized project file (.pixly) */
+export type ProjectData = {
+  version: number;
+  canvas: { width: number; height: number };
+  animState: AnimationState;
+  currentColor: string;
+  currentTool: ToolType;
+  savedAt: string; // ISO timestamp
+};
