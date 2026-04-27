@@ -1,4 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
+import { rasterizeGeometry } from '../utils/drawing';
 
 export type PreviewTool = 'line' | 'rect' | 'circle' | 'select' | null;
 
@@ -37,7 +38,6 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(ratio, ratio);
     ctx.imageSmoothingEnabled = false;
-    (ctx as any).imageSmoothingQuality = 'low';
     
   }, [gridSize, pixelSize]);
 
@@ -73,43 +73,13 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
         }
       };
 
-      if (tool === 'line') {
-        let x0 = startX;
-        let y0 = startY;
-        const x1 = endX;
-        const y1 = endY;
-        const dx = Math.abs(x1 - x0);
-        const dy = Math.abs(y1 - y0);
-        const sx = (x0 < x1) ? 1 : -1;
-        const sy = (y0 < y1) ? 1 : -1;
-        let err = dx - dy;
-
-        while (true) {
-          drawPoint(x0, y0, true);
-          if (x0 === x1 && y0 === y1) break;
-          const e2 = 2 * err;
-          if (e2 > -dy) { err -= dy; x0 += sx; }
-          if (e2 < dx) { err += dx; y0 += sy; }
-        }
-      } else if (tool === 'rect') {
-        const minX = Math.min(startX, endX);
-        const maxX = Math.max(startX, endX);
-        const minY = Math.min(startY, endY);
-        const maxY = Math.max(startY, endY);
-        for (let y = minY; y <= maxY; y++) {
-          for (let x = minX; x <= maxX; x++) {
-            drawPoint(x, y);
-          }
-        }
-      } else if (tool === 'circle') {
-        // Midpoint circle algorithm (filled)
-        // A simple approach is to calculate the radius and fill points inside
-        const radius = Math.floor(Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2)));
-        for (let y = startY - radius; y <= startY + radius; y++) {
-          for (let x = startX - radius; x <= startX + radius; x++) {
-            if (Math.pow(x - startX, 2) + Math.pow(y - startY, 2) <= radius * radius) {
-              drawPoint(x, y);
-            }
+      if (tool === 'line' || tool === 'rect' || tool === 'circle') {
+        const points = rasterizeGeometry(tool, startX, startY, endX, endY);
+        for (const point of points) {
+          if (tool === 'line') {
+            drawPoint(point.x, point.y, true);
+          } else {
+            drawPoint(point.x, point.y);
           }
         }
       } else if (tool === 'select') {

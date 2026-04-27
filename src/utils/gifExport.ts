@@ -89,26 +89,9 @@ function subBlocks(data: number[]): number[] {
   return out;
 }
 
-// ---- Color quantization ----
+// ---- Palette helpers ----
 
-function buildPalette(frames: Frame[], gridSize: number): { palette: number[][]; colorMap: Map<string, number> } {
-  const colorSet = new Set<string>();
-  colorSet.add('#ffffff'); // background
-
-  for (const frame of frames) {
-    for (const layer of frame.layers) {
-      if (!layer.visible) continue;
-      for (let y = 0; y < gridSize; y++) {
-        for (let x = 0; x < gridSize; x++) {
-          const c = layer.grid[y]?.[x];
-          if (c) colorSet.add(c.toLowerCase());
-        }
-      }
-    }
-  }
-
-  const colors = Array.from(colorSet);
-
+function buildPalette(colors: string[]): { palette: number[][]; colorMap: Map<string, number> } {
   // GIF needs power-of-2 palette
   let palBits = 1;
   while ((1 << palBits) < colors.length) palBits++;
@@ -136,13 +119,11 @@ function buildPalette(frames: Frame[], gridSize: number): { palette: number[][];
 
 // ---- Frame rendering to index stream ----
 
-function renderFrameToIndices(
+function renderFrameToHexStream(
   frame: Frame,
   gridSize: number,
   scale: number,
-  colorMap: Map<string, number>,
-  bgIndex: number,
-): number[] {
+): string[] {
   const size = gridSize * scale;
   const canvas = new OffscreenCanvas(size, size);
   const ctx = canvas.getContext('2d')!;
@@ -187,17 +168,27 @@ function renderFrameToIndices(
 
   const imageData = ctx.getImageData(0, 0, size, size);
   const data = imageData.data;
-  const indices: number[] = new Array(size * size);
+  const colors: string[] = new Array(size * size);
 
   for (let i = 0; i < size * size; i++) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
-    const hex = '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
-
-    indices[i] = colorMap.get(hex) ?? bgIndex;
+    colors[i] = '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
   }
 
+  return colors;
+}
+
+function renderHexStreamToIndices(
+  colors: string[],
+  colorMap: Map<string, number>,
+  bgIndex: number,
+): number[] {
+  const indices: number[] = new Array(colors.length);
+  for (let i = 0; i < colors.length; i++) {
+    indices[i] = colorMap.get(colors[i]) ?? bgIndex;
+  }
   return indices;
 }
 
@@ -209,7 +200,19 @@ export async function exportGif(
   scale: number = 4,
 ): Promise<Blob> {
   const size = gridSize * scale;
-  const { palette, colorMap } = buildPalette(frames, gridSize);
+  const renderedFrames = frames.map(frame => renderFrameToHexStream(frame, gridSize, scale));
+  const colorSet = new Set<string>(['#ffffff']);
+
+  for (const renderedFrame of renderedFrames) {
+    for (const color of renderedFrame) {
+      colorSet.add(color);
+      if (colorSet.size > 256) {
+        throw new Error('GIF export supports up to 256 rendered colors. Reduce colors or opacity variations and try again.');
+      }
+    }
+  }
+
+  const { palette, colorMap } = buildPalette(Array.from(colorSet));
   const bgIndex = colorMap.get('#ffffff') ?? 0;
 
   const palBits = Math.ceil(Math.log2(palette.length));
@@ -265,7 +268,7 @@ export async function exportGif(
     // LZW minimum code size
     bytes.push(minCodeSize);
 
-    const indices = renderFrameToIndices(frame, gridSize, scale, colorMap, bgIndex);
+    const indices = renderHexStreamToIndices(renderedFrames[fi], colorMap, bgIndex);
     const compressed = lzwEncode(indices, minCodeSize);
     const blocks = subBlocks(compressed);
     for (const b of blocks) bytes.push(b);

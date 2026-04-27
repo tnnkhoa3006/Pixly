@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from 'react';
+import { useRef, useCallback, useState, useEffect } from 'react';
 import type { Frame } from '../types';
 
 interface UsePlaybackOptions {
@@ -17,52 +17,71 @@ export function usePlayback({ frames, onFrameChange }: UsePlaybackOptions) {
   const lastTime = useRef<number>(0);
   const elapsed = useRef<number>(0);
   const currentIndex = useRef<number>(0);
-
-  // Keep latest frames accessible in the rAF callback
   const framesRef = useRef(frames);
-  framesRef.current = frames;
-
   const onFrameChangeRef = useRef(onFrameChange);
-  onFrameChangeRef.current = onFrameChange;
+  const tickRef = useRef<((time: number) => void) | null>(null);
 
-  const tick = useCallback((time: number) => {
-    if (lastTime.current === 0) {
+  useEffect(() => {
+    framesRef.current = frames;
+  }, [frames]);
+
+  useEffect(() => {
+    onFrameChangeRef.current = onFrameChange;
+  }, [onFrameChange]);
+
+  const stop = useCallback(() => {
+    cancelAnimationFrame(rafId.current);
+    rafId.current = 0;
+    setIsPlaying(false);
+    lastTime.current = 0;
+    elapsed.current = 0;
+  }, []);
+
+  useEffect(() => {
+    tickRef.current = (time: number) => {
+      if (lastTime.current === 0) {
+        lastTime.current = time;
+      }
+
+      const delta = time - lastTime.current;
       lastTime.current = time;
-    }
+      elapsed.current += delta;
 
-    const delta = time - lastTime.current;
-    lastTime.current = time;
-    elapsed.current += delta;
+      const currentFrames = framesRef.current;
+      if (currentFrames.length <= 1) {
+        stop();
+        return;
+      }
 
-    const fs = framesRef.current;
-    if (fs.length === 0) return;
+      const frame = currentFrames[currentIndex.current];
+      const duration = frame?.duration ?? 100;
 
-    const frame = fs[currentIndex.current];
-    const dur = frame?.duration ?? 100;
+      if (elapsed.current >= duration) {
+        elapsed.current -= duration;
+        currentIndex.current = (currentIndex.current + 1) % currentFrames.length;
+        onFrameChangeRef.current(currentIndex.current);
+      }
 
-    if (elapsed.current >= dur) {
-      elapsed.current -= dur;
-      currentIndex.current = (currentIndex.current + 1) % fs.length;
-      onFrameChangeRef.current(currentIndex.current);
-    }
+      rafId.current = requestAnimationFrame((nextTime) => {
+        tickRef.current?.(nextTime);
+      });
+    };
+  }, [stop]);
 
-    rafId.current = requestAnimationFrame(tick);
+  useEffect(() => () => {
+    cancelAnimationFrame(rafId.current);
   }, []);
 
   const play = useCallback((startIndex?: number) => {
     if (framesRef.current.length <= 1) return;
+    cancelAnimationFrame(rafId.current);
     currentIndex.current = startIndex ?? 0;
     lastTime.current = 0;
     elapsed.current = 0;
     setIsPlaying(true);
-    rafId.current = requestAnimationFrame(tick);
-  }, [tick]);
-
-  const stop = useCallback(() => {
-    cancelAnimationFrame(rafId.current);
-    setIsPlaying(false);
-    lastTime.current = 0;
-    elapsed.current = 0;
+    rafId.current = requestAnimationFrame((time) => {
+      tickRef.current?.(time);
+    });
   }, []);
 
   const toggle = useCallback((startIndex?: number) => {

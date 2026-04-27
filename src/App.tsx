@@ -4,8 +4,9 @@ import PreviewCanvas, { type PreviewTool, type PreviewCanvasHandle } from './com
 import Timeline from './components/Timeline';
 import { usePlayback } from './hooks/usePlayback';
 import { exportGif } from './utils/gifExport';
+import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './utils/drawing';
 import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform } from './utils';
-import type { AnimationState, ToolType, GridSizeType } from './types';
+import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform } from './types';
 
 import { 
   Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle, 
@@ -15,6 +16,110 @@ import {
 
 const MIN_PIXEL_SIZE = 6;
 const DEFAULT_PALETTE = ['#000000', '#ffffff', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6'];
+const FRAME_TRANSFORM_TOOLS = ['frame-move', 'frame-rotate', 'frame-scale'] as const;
+
+type FrameTransformTool = (typeof FRAME_TRANSFORM_TOOLS)[number];
+
+type TransformSession = {
+  tool: FrameTransformTool;
+  anchorLayerId: string;
+  startPointer: { x: number; y: number };
+  origin: { x: number; y: number };
+  startAngle: number;
+  startDistance: number;
+  initialTransforms: Record<string, LayerTransform>;
+};
+
+type TransformMetrics = {
+  deltaGridX: number;
+  deltaGridY: number;
+  deltaAngle: number;
+  scaleFactor: number;
+};
+
+type TransformHud = {
+  tool: FrameTransformTool;
+  title: string;
+  value: string;
+  meta: string;
+  hint: string;
+  pointer: { x: number; y: number };
+  origin: { x: number; y: number };
+};
+
+const isFrameTransformTool = (tool: ToolType): tool is FrameTransformTool =>
+  FRAME_TRANSFORM_TOOLS.includes(tool as FrameTransformTool);
+
+const roundTo = (value: number, decimals = 2) => Number(value.toFixed(decimals));
+
+const clampScale = (value: number) => Math.max(0.1, Math.min(5, roundTo(value, 3)));
+
+const wrapDegrees = (value: number) => {
+  let wrapped = value % 360;
+  if (wrapped > 180) wrapped -= 360;
+  if (wrapped <= -180) wrapped += 360;
+  return roundTo(wrapped, 1);
+};
+
+const formatSigned = (value: number, decimals = 1) => `${value >= 0 ? '+' : ''}${roundTo(value, decimals)}`;
+const formatPlain = (value: number, decimals = 1) => `${roundTo(value, decimals)}`;
+
+const getFrameToolTitle = (tool: FrameTransformTool) => {
+  if (tool === 'frame-move') return 'Move';
+  if (tool === 'frame-rotate') return 'Rotate';
+  return 'Scale';
+};
+
+const getFrameToolHint = (tool: FrameTransformTool) => {
+  if (tool === 'frame-move') return 'Drag to move selected layers';
+  if (tool === 'frame-rotate') return 'Drag around the center pivot';
+  return 'Drag away from or toward the center pivot';
+};
+
+const buildTransformHud = (
+  tool: FrameTransformTool,
+  transform: LayerTransform,
+  metrics: TransformMetrics,
+  pointer: { x: number; y: number },
+  origin: { x: number; y: number },
+  selectedCount: number,
+): TransformHud => {
+  const countLabel = `${selectedCount} layer${selectedCount === 1 ? '' : 's'}`;
+
+  if (tool === 'frame-move') {
+    return {
+      tool,
+      title: getFrameToolTitle(tool),
+      value: `X ${formatSigned(metrics.deltaGridX)}  Y ${formatSigned(metrics.deltaGridY)}`,
+      meta: `Pos ${formatPlain(transform.x)}, ${formatPlain(transform.y)} | ${countLabel}`,
+      hint: getFrameToolHint(tool),
+      pointer,
+      origin,
+    };
+  }
+
+  if (tool === 'frame-rotate') {
+    return {
+      tool,
+      title: getFrameToolTitle(tool),
+      value: `${formatPlain(transform.rotation)} deg`,
+      meta: `Delta ${formatSigned(metrics.deltaAngle)} deg | ${countLabel}`,
+      hint: getFrameToolHint(tool),
+      pointer,
+      origin,
+    };
+  }
+
+  return {
+    tool,
+    title: getFrameToolTitle(tool),
+    value: `${Math.round(transform.scale * 100)}%`,
+    meta: `${formatPlain(transform.scale, 2)}x | ${countLabel}`,
+    hint: getFrameToolHint(tool),
+    pointer,
+    origin,
+  };
+};
 
 export default function App() {
   const [gridSize, setGridSize] = useState<GridSizeType>(16);
@@ -23,6 +128,11 @@ export default function App() {
   const [brushSize, setBrushSize] = useState<number>(1);
   const [onionSkinEnabled, setOnionSkinEnabled] = useState(false);
   const [animationMode, setAnimationMode] = useState(false);
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
+  const [undoStack, setUndoStack] = useState<AnimationState[]>([]);
+  const [redoStack, setRedoStack] = useState<AnimationState[]>([]);
+  const canUndo = undoStack.length > 0;
+  const canRedo = redoStack.length > 0;
 
   // --- SINGLE SOURCE OF TRUTH ---
   const [animState, setAnimState] = useState<AnimationState>(() => {
@@ -36,11 +146,16 @@ export default function App() {
   });
 
   const { frames, activeFrameIndex, activeLayerId, selectedLayerIds = [activeLayerId] } = animState;
-  const activeFrame = frames[activeFrameIndex];
-  const layers = activeFrame.layers;
-
   const [currentTool, setCurrentTool] = useState<ToolType>('brush');
   const [currentColor, setCurrentColor] = useState<string>('#000000');
+  const [pickerHoverColor, setPickerHoverColor] = useState<string | null>(null);
+  const [transformHud, setTransformHud] = useState<TransformHud | null>(null);
+  const activeFrame = frames[activeFrameIndex];
+  const layers = activeFrame.layers;
+  const activeLayer = layers.find(layer => layer.id === activeLayerId) ?? layers[0] ?? null;
+  const selectedTransformLayers = layers.filter(layer => selectedLayerIds.includes(layer.id));
+  const frameTransformTool = animationMode && isFrameTransformTool(currentTool) ? currentTool : null;
+  const transformGuideSize = gridSize * pixelSize;
   
   const canvasRef = useRef<CanvasHandle>(null);
   const previewCanvasRef = useRef<PreviewCanvasHandle>(null);
@@ -53,14 +168,39 @@ export default function App() {
   const isPanning = useRef(false);
   const lastPanPoint = useRef<{ x: number, y: number } | null>(null);
   const isSpaceDown = useRef(false);
+  const activePointerId = useRef<number | null>(null);
+  const lastNonPickerToolRef = useRef<ToolType>('brush');
+  const pickerHoverColorRef = useRef<string | null>(null);
 
   const isDrawing = useRef(false);
   const strokeStart = useRef<{ x: number, y: number } | null>(null);
-  const lastDrawn = useRef<{ x: number, y: number } | null>(null);
+  const dragCurrent = useRef<{ x: number, y: number } | null>(null);
+  const lastBrushPoint = useRef<{ x: number, y: number } | null>(null);
+  const transformSessionRef = useRef<TransformSession | null>(null);
 
-  const historyRef = useRef<AnimationState[]>([]);
-  const redoRef = useRef<AnimationState[]>([]);
-  const [, forceRender] = useState({});
+  const updatePickerHoverColor = useCallback((nextColor: string | null) => {
+    if (pickerHoverColorRef.current === nextColor) return;
+    pickerHoverColorRef.current = nextColor;
+    setPickerHoverColor(nextColor);
+  }, []);
+
+  const activateTool = useCallback((nextTool: ToolType) => {
+    setCurrentTool(prevTool => {
+      if (nextTool === 'picker') {
+        if (prevTool !== 'picker') {
+          lastNonPickerToolRef.current = prevTool;
+        }
+        return nextTool;
+      }
+
+      lastNonPickerToolRef.current = nextTool;
+      return nextTool;
+    });
+
+    if (nextTool !== 'picker') {
+      updatePickerHoverColor(null);
+    }
+  }, [updatePickerHoverColor]);
 
   // --- Playback Controller ---
   const handleFrameChange = useCallback((index: number) => {
@@ -85,102 +225,139 @@ export default function App() {
     }
   }, [frames, activeFrameIndex, onionSkinEnabled, isPlaying, pixelSize, showGrid]);
 
-  // Init history
-  useEffect(() => {
-    if (historyRef.current.length === 0) {
-      historyRef.current.push({
-        frames: frames.map(f => cloneFrame(f)),
-        activeFrameIndex,
-        activeLayerId,
-        selectedLayerIds: [...selectedLayerIds]
-      });
+  const cloneAnimationState = useCallback((state: AnimationState): AnimationState => ({
+    frames: state.frames.map(frame => cloneFrame(frame)),
+    activeFrameIndex: state.activeFrameIndex,
+    activeLayerId: state.activeLayerId,
+    selectedLayerIds: [...state.selectedLayerIds],
+  }), []);
+
+  const pushUndoSnapshot = useCallback((state: AnimationState) => {
+    const snapshot = cloneAnimationState(state);
+    setUndoStack(prev => {
+      const next = [...prev, snapshot];
+      if (next.length > 50) next.shift();
+      return next;
+    });
+    setRedoStack([]);
+  }, [cloneAnimationState]);
+
+  const getTransformAnchorLayer = useCallback(() => {
+    if (selectedTransformLayers.length > 0) {
+      return selectedTransformLayers.find(layer => layer.id === activeLayerId) ?? selectedTransformLayers[0];
     }
+    return activeLayer;
+  }, [activeLayer, activeLayerId, selectedTransformLayers]);
+
+  const getLayerCenterInContainer = useCallback((transform: LayerTransform) => ({
+    x: panRef.current.x + (gridSize * pixelSize) / 2 + transform.x * pixelSize,
+    y: panRef.current.y + (gridSize * pixelSize) / 2 + transform.y * pixelSize,
+  }), [gridSize, pixelSize]);
+
+  const getTransformMetrics = useCallback((session: TransformSession, mouseX: number, mouseY: number): TransformMetrics => {
+    const deltaGridX = (mouseX - session.startPointer.x) / pixelSize;
+    const deltaGridY = (mouseY - session.startPointer.y) / pixelSize;
+
+    const currentAngle = (Math.atan2(mouseY - session.origin.y, mouseX - session.origin.x) * 180) / Math.PI;
+    let deltaAngle = currentAngle - session.startAngle;
+    if (deltaAngle > 180) deltaAngle -= 360;
+    if (deltaAngle < -180) deltaAngle += 360;
+
+    const currentDistance = Math.hypot(mouseX - session.origin.x, mouseY - session.origin.y);
+    const distanceDelta = currentDistance - session.startDistance;
+    const scaleFactor = Math.max(0.05, 1 + distanceDelta / Math.max(session.startDistance, 80));
+
+    return {
+      deltaGridX,
+      deltaGridY,
+      deltaAngle,
+      scaleFactor,
+    };
+  }, [pixelSize]);
+
+  const getNextTransform = useCallback((tool: FrameTransformTool, transform: LayerTransform, metrics: TransformMetrics): LayerTransform => {
+    if (tool === 'frame-move') {
+      return {
+        ...transform,
+        x: roundTo(transform.x + metrics.deltaGridX, 3),
+        y: roundTo(transform.y + metrics.deltaGridY, 3),
+      };
+    }
+
+    if (tool === 'frame-rotate') {
+      return {
+        ...transform,
+        rotation: wrapDegrees(transform.rotation + metrics.deltaAngle),
+      };
+    }
+
+    return {
+      ...transform,
+      scale: clampScale(transform.scale * metrics.scaleFactor),
+    };
   }, []);
 
-  const saveHistory = (newState: AnimationState) => {
-    historyRef.current.push({
-      frames: newState.frames.map(f => cloneFrame(f)),
-      activeFrameIndex: newState.activeFrameIndex,
-      activeLayerId: newState.activeLayerId,
-      selectedLayerIds: [...newState.selectedLayerIds]
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    setRedoStack(prev => [...prev, cloneAnimationState(animState)]);
+    setUndoStack(prev => prev.slice(0, -1));
+    setAnimState(cloneAnimationState(previous));
+  }, [animState, cloneAnimationState, undoStack]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack(prev => {
+      const updated = [...prev, cloneAnimationState(animState)];
+      if (updated.length > 50) updated.shift();
+      return updated;
     });
-    if (historyRef.current.length > 50) historyRef.current.shift();
-    redoRef.current = [];
-  };
-
-  const handleUndo = () => {
-    if (historyRef.current.length > 1) {
-      const current = historyRef.current.pop()!;
-      redoRef.current.push(current);
-      const previous = historyRef.current[historyRef.current.length - 1];
-      const cloned = {
-        frames: previous.frames.map(f => cloneFrame(f)),
-        activeFrameIndex: previous.activeFrameIndex,
-        activeLayerId: previous.activeLayerId,
-        selectedLayerIds: [...previous.selectedLayerIds]
-      };
-      setAnimState(cloned);
-    }
-  };
-
-  const handleRedo = () => {
-    if (redoRef.current.length > 0) {
-      const next = redoRef.current.pop()!;
-      historyRef.current.push(next);
-      const cloned = {
-        frames: next.frames.map(f => cloneFrame(f)),
-        activeFrameIndex: next.activeFrameIndex,
-        activeLayerId: next.activeLayerId,
-        selectedLayerIds: [...next.selectedLayerIds]
-      };
-      setAnimState(cloned);
-    }
-  };
+    setRedoStack(prev => prev.slice(0, -1));
+    setAnimState(cloneAnimationState(next));
+  }, [animState, cloneAnimationState, redoStack]);
 
   // --- Frame Operations ---
   const handleAddFrame = () => {
+    pushUndoSnapshot(animState);
     setAnimState(prev => {
       const newFrame = cloneFrame(prev.frames[prev.activeFrameIndex]);
       const nextFrames = [...prev.frames, newFrame];
-      const nextState = { ...prev, frames: nextFrames, activeFrameIndex: nextFrames.length - 1 };
-      saveHistory(nextState);
-      return nextState;
+      return { ...prev, frames: nextFrames, activeFrameIndex: nextFrames.length - 1 };
     });
   };
 
   const handleDuplicateFrame = () => {
+    pushUndoSnapshot(animState);
     setAnimState(prev => {
       const newFrame = shallowCloneFrame(prev.frames[prev.activeFrameIndex]);
       const nextFrames = [...prev.frames, newFrame];
-      const nextState = { ...prev, frames: nextFrames, activeFrameIndex: nextFrames.length - 1 };
-      saveHistory(nextState);
-      return nextState;
+      return { ...prev, frames: nextFrames, activeFrameIndex: nextFrames.length - 1 };
     });
   };
 
   const handleDeleteFrame = () => {
     if (frames.length <= 1) return;
+    pushUndoSnapshot(animState);
     setAnimState(prev => {
       const nextFrames = prev.frames.filter((_, i) => i !== prev.activeFrameIndex);
       const nextIndex = Math.min(prev.activeFrameIndex, nextFrames.length - 1);
-      const nextState = { ...prev, frames: nextFrames, activeFrameIndex: nextIndex };
-      saveHistory(nextState);
-      return nextState;
+      return { ...prev, frames: nextFrames, activeFrameIndex: nextIndex };
     });
   };
 
   const handleSetDuration = (index: number, duration: number) => {
+    pushUndoSnapshot(animState);
     setAnimState(prev => {
       const nextFrames = [...prev.frames];
       nextFrames[index] = { ...nextFrames[index], duration };
-      const nextState = { ...prev, frames: nextFrames };
-      saveHistory(nextState);
-      return nextState;
+      return { ...prev, frames: nextFrames };
     });
   };
 
   const handleGridSizeChange = (newSize: GridSizeType) => {
     if (window.confirm(`Changing grid size to ${newSize}x${newSize} will clear your current canvas. Continue?`)) {
+      pushUndoSnapshot(animState);
       setGridSize(newSize);
       const defaultFrame = createDefaultFrame(newSize);
       setAnimState({
@@ -189,8 +366,6 @@ export default function App() {
         activeLayerId: defaultFrame.layers[0].id,
         selectedLayerIds: [defaultFrame.layers[0].id]
       });
-      historyRef.current = [];
-      redoRef.current = [];
       panRef.current = { x: 0, y: 0 };
       if (transformContainerRef.current) {
         transformContainerRef.current.style.transform = `translate(0px, 0px)`;
@@ -244,20 +419,20 @@ export default function App() {
       if (e.code === 'Space' && !e.repeat) {
         e.preventDefault();
         isSpaceDown.current = true;
-        forceRender({});
+        setIsSpacePressed(true);
       }
       
       const key = e.key.toLowerCase();
       if (!isPlaying) {
-        if (key === 'b') setCurrentTool('brush');
-        if (key === 'e') setCurrentTool('eraser');
-        if (key === 'g') setCurrentTool('fill');
-        if (key === 'i') setCurrentTool('picker');
-        if (key === 'l') setCurrentTool('line');
-        if (key === 'r') setCurrentTool('rect');
-        if (key === 'c') setCurrentTool('circle');
-        if (key === 's') setCurrentTool('select');
-        if (key === 'm') setCurrentTool('move');
+        if (key === 'b') activateTool('brush');
+        if (key === 'e') activateTool('eraser');
+        if (key === 'g') activateTool('fill');
+        if (key === 'i') activateTool('picker');
+        if (key === 'l') activateTool('line');
+        if (key === 'r') activateTool('rect');
+        if (key === 'c') activateTool('circle');
+        if (key === 's') activateTool('select');
+        if (key === 'm') activateTool('move');
       }
 
       if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); handleUndo(); }
@@ -269,7 +444,7 @@ export default function App() {
       if (e.code === 'Space') {
         e.preventDefault();
         isSpaceDown.current = false;
-        forceRender({});
+        setIsSpacePressed(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -278,100 +453,184 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [isPlaying]);
+  }, [activateTool, handleRedo, handleUndo, isPlaying]);
 
   // --- Drawing logic ---
-  const getPointerCoords = (e: React.PointerEvent) => {
+  const getPointerPosition = (e: React.PointerEvent) => {
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return null;
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
-    
+    return { mouseX, mouseY };
+  };
+
+  const screenToLayerGrid = (layer: Layer, mouseX: number, mouseY: number) => {
     let cx = mouseX - panRef.current.x;
     let cy = mouseY - panRef.current.y;
 
+    const logicalW = gridSize * pixelSize;
+    const logicalH = gridSize * pixelSize;
+    const centerX = logicalW / 2;
+    const centerY = logicalH / 2;
+    const { x: tx, y: ty, rotation, scale } = layer.transform;
+
+    cx -= centerX;
+    cy -= centerY;
+
+    cx -= tx * pixelSize;
+    cy -= ty * pixelSize;
+
+    if (rotation !== 0) {
+      const rad = (-rotation * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const rx = cx * cos - cy * sin;
+      const ry = cx * sin + cy * cos;
+      cx = rx;
+      cy = ry;
+    }
+
+    if (scale !== 1) {
+      cx /= scale;
+      cy /= scale;
+    }
+
+    cx += centerX;
+    cy += centerY;
+
+    return {
+      gridX: Math.floor(cx / pixelSize),
+      gridY: Math.floor(cy / pixelSize),
+      canvasX: cx,
+      canvasY: cy,
+    };
+  };
+
+  const screenToActiveLayerGrid = (mouseX: number, mouseY: number) => {
     const frame = frames[activeFrameIndex];
-    if (frame) {
-      const activeLayer = frame.layers.find(l => l.id === activeLayerId);
-      if (activeLayer) {
-        const { x: tx, y: ty, rotation, scale } = activeLayer.transform;
-      const logicalW = gridSize * pixelSize;
-      const logicalH = gridSize * pixelSize;
-      const centerX = logicalW / 2;
-      const centerY = logicalH / 2;
+    if (!frame) return null;
+    const activeLayer = frame.layers.find(layer => layer.id === activeLayerId);
+    if (!activeLayer) return null;
+    return screenToLayerGrid(activeLayer, mouseX, mouseY);
+  };
 
-      cx -= centerX;
-      cy -= centerY;
+  const getPointerCoords = (e: React.PointerEvent) => {
+    const pointer = getPointerPosition(e);
+    if (!pointer) return null;
+    const activeCoords = screenToActiveLayerGrid(pointer.mouseX, pointer.mouseY);
+    if (!activeCoords) return null;
+    return { ...pointer, ...activeCoords };
+  };
 
-      cx -= tx * pixelSize;
-      cy -= ty * pixelSize;
+  const isGridCoordInBounds = (x: number, y: number) =>
+    x >= 0 && x < gridSize && y >= 0 && y < gridSize;
 
-      if (rotation !== 0) {
-        const rad = (-rotation * Math.PI) / 180;
-        const cos = Math.cos(rad);
-        const sin = Math.sin(rad);
-        const rx = cx * cos - cy * sin;
-        const ry = cx * sin + cy * cos;
-        cx = rx;
-        cy = ry;
-      }
+  const pickTopmostVisibleLayerAt = (mouseX: number, mouseY: number) => {
+    for (let i = layers.length - 1; i >= 0; i--) {
+      const layer = layers[i];
+      if (!layer.visible) continue;
+      const { gridX, gridY } = screenToLayerGrid(layer, mouseX, mouseY);
+      if (!isGridCoordInBounds(gridX, gridY)) continue;
+      const color = layer.grid[gridY]?.[gridX];
+      if (color) return color;
+    }
+    return null;
+  };
 
-      if (scale !== 1) {
-        cx /= scale;
-        cy /= scale;
-      }
+  const stampBrushPoint = (
+    grid: (string | null)[][],
+    x: number,
+    y: number,
+    color: string | null,
+    size: number,
+    clonedRows: Set<number>,
+  ) => {
+    let changed = false;
+    const startOffset = -Math.floor(size / 2);
+    const endOffset = Math.floor((size - 1) / 2);
 
-      cx += centerX;
-      cy += centerY;
+    for (let dy = startOffset; dy <= endOffset; dy++) {
+      for (let dx = startOffset; dx <= endOffset; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!isGridCoordInBounds(nx, ny)) continue;
+        if (grid[ny][nx] === color) continue;
+        if (!clonedRows.has(ny)) {
+          grid[ny] = [...grid[ny]];
+          clonedRows.add(ny);
+        }
+        grid[ny][nx] = color;
+        changed = true;
       }
     }
 
-    const gridX = Math.floor(cx / pixelSize);
-    const gridY = Math.floor(cy / pixelSize);
-    return { gridX, gridY, mouseX, mouseY };
+    return changed;
   };
 
   const getForwardCssTransform = () => {
-    const frame = frames[activeFrameIndex];
-    if (!frame) return 'none';
-    const activeLayer = frame.layers.find(l => l.id === activeLayerId);
     if (!activeLayer) return 'none';
     const { x: tx, y: ty, rotation, scale } = activeLayer.transform;
     return `translate(${tx * pixelSize}px, ${ty * pixelSize}px) rotate(${rotation}deg) scale(${scale})`;
   };
 
   const getActiveTool = () => {
-    if (!animationMode && ['frame-move', 'frame-rotate', 'frame-scale'].includes(currentTool)) {
+    if (!animationMode && isFrameTransformTool(currentTool)) {
       return 'brush';
     }
     return currentTool;
   };
 
+  const hideHoverOverlay = () => {
+    if (!hoverOverlayRef.current) return;
+    hoverOverlayRef.current.style.display = 'none';
+  };
+
+  const resetCanvasHover = () => {
+    if (coordsDisplayRef.current) coordsDisplayRef.current.innerText = 'X: -, Y: -';
+    hideHoverOverlay();
+  };
+
   const updateHover = (gridX: number, gridY: number, isActive: boolean) => {
     if (coordsDisplayRef.current) coordsDisplayRef.current.innerText = `X: ${gridX}, Y: ${gridY}`;
     if (!hoverOverlayRef.current) return;
-    
+
     const tool = getActiveTool();
-    const isGeometryTool = ['line', 'rect', 'circle', 'select'].includes(tool);
-    if (pixelSize < 8 || !isActive || gridX < 0 || gridX >= gridSize || gridY < 0 || gridY >= gridSize || (isDrawing.current && isGeometryTool)) {
-      hoverOverlayRef.current.style.display = 'none';
+    if (isFrameTransformTool(tool)) {
+      hideHoverOverlay();
       return;
     }
+    const isGeometryTool = ['line', 'rect', 'circle', 'select'].includes(tool);
+    if (pixelSize < 8 || !isActive || !isGridCoordInBounds(gridX, gridY) || (isDrawing.current && isGeometryTool)) {
+      hideHoverOverlay();
+      return;
+    }
+    const isPickerTool = tool === 'picker';
     const isBrushSized = ['brush', 'eraser', 'line'].includes(tool);
-    const currentBrushSize = isBrushSized ? brushSize : 1;
+    const currentBrushSize = (isBrushSized && !isPickerTool) ? brushSize : 1;
     const startOffset = -Math.floor(currentBrushSize / 2);
     hoverOverlayRef.current.style.display = 'block';
     hoverOverlayRef.current.style.width = `${currentBrushSize * pixelSize}px`;
     hoverOverlayRef.current.style.height = `${currentBrushSize * pixelSize}px`;
     hoverOverlayRef.current.style.transform = `translate(${(gridX + startOffset) * pixelSize}px, ${(gridY + startOffset) * pixelSize}px)`;
-    hoverOverlayRef.current.style.background = tool === 'eraser' ? 'rgba(255,0,0,0.15)' : 'rgba(0,0,0,0.1)';
+    hoverOverlayRef.current.style.borderRadius = isPickerTool ? '4px' : '0';
+    hoverOverlayRef.current.style.border = isPickerTool
+      ? `2px solid ${pickerHoverColorRef.current ?? 'rgba(255,255,255,0.65)'}`
+      : tool === 'eraser'
+        ? '1px solid rgba(255, 99, 99, 0.5)'
+        : '1px solid rgba(255,255,255,0.16)';
+    hoverOverlayRef.current.style.boxShadow = isPickerTool
+      ? '0 0 0 1px rgba(0,0,0,0.35) inset'
+      : 'none';
+    hoverOverlayRef.current.style.background = isPickerTool
+      ? (pickerHoverColorRef.current ? `${pickerHoverColorRef.current}33` : 'rgba(255,255,255,0.08)')
+      : tool === 'eraser'
+        ? 'rgba(255,0,0,0.15)'
+        : 'rgba(0,0,0,0.1)';
   };
 
-  const applyTool = (x: number, y: number, isRightClick: boolean) => {
+  const applyBrushPoints = (points: Point[], isRightClick: boolean) => {
     const tool = getActiveTool();
     const targetColor = (tool === 'eraser' || isRightClick) ? null : currentColor;
-    const startOffset = -Math.floor(brushSize / 2);
-    const endOffset = Math.floor((brushSize - 1) / 2);
 
     setAnimState(prev => {
       const activeIdx = prev.activeFrameIndex;
@@ -382,27 +641,13 @@ export default function App() {
 
       const activeLayer = { ...newLayers[layerIdx] };
       const newGrid = [...activeLayer.grid];
-      let clonedRows = new Set<number>();
+      const clonedRows = new Set<number>();
       let changed = false;
 
-      // Handle untransformed space for pixel tools
-      // For now, pixel tools operate directly on the grid. 
-      // If the frame is transformed, pixel tools act on the original grid coordinates.
-      for (let dy = startOffset; dy <= endOffset; dy++) {
-        for (let dx = startOffset; dx <= endOffset; dx++) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= gridSize || ny >= gridSize) continue;
-          if (newGrid[ny][nx] !== targetColor) {
-            if (!clonedRows.has(ny)) {
-              newGrid[ny] = [...newGrid[ny]];
-              clonedRows.add(ny);
-            }
-            newGrid[ny][nx] = targetColor;
-            changed = true;
-          }
-        }
+      for (const point of points) {
+        changed = stampBrushPoint(newGrid, point.x, point.y, targetColor, brushSize, clonedRows) || changed;
       }
+
       if (!changed) return prev;
       activeLayer.grid = newGrid;
       newLayers[layerIdx] = activeLayer;
@@ -411,6 +656,19 @@ export default function App() {
       nextFrames[activeIdx] = frame;
       return { ...prev, frames: nextFrames };
     });
+  };
+
+  const applyTool = (x: number, y: number, isRightClick: boolean) => {
+    applyBrushPoints([{ x, y }], isRightClick);
+  };
+
+  const applyStrokeSegment = (
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    isRightClick: boolean,
+  ) => {
+    if (start.x === end.x && start.y === end.y) return;
+    applyBrushPoints(rasterizeLine(start.x, start.y, end.x, end.y), isRightClick);
   };
 
   const handleFill = (startX: number, startY: number, isRightClick: boolean) => {
@@ -435,7 +693,7 @@ export default function App() {
 
       while (stack.length > 0) {
         const { x, y } = stack.pop()!;
-        if (x < 0 || x >= gridSize || y < 0 || y >= gridSize) continue;
+        if (!isGridCoordInBounds(x, y)) continue;
 
         const key = `${x},${y}`;
         if (visited.has(key)) continue;
@@ -473,67 +731,26 @@ export default function App() {
       const newGrid = activeLayer.grid.map(row => [...row]);
       let changed = false;
       const color = isRightClick ? null : currentColor;
+      const geometryTool = tool as GeometryTool;
+      const points = rasterizeGeometry(geometryTool, x0, y0, x1, y1);
 
-      const setPixel = (x: number, y: number, applyBrush: boolean = false) => {
-        if (applyBrush) {
+      for (const point of points) {
+        if (geometryTool === 'line') {
           const startOffset = -Math.floor(brushSize / 2);
           const endOffset = Math.floor((brushSize - 1) / 2);
           for (let dy = startOffset; dy <= endOffset; dy++) {
             for (let dx = startOffset; dx <= endOffset; dx++) {
-              const nx = x + dx;
-              const ny = y + dy;
-              if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
-                if (newGrid[ny][nx] !== color) {
-                  newGrid[ny][nx] = color;
-                  changed = true;
-                }
+              const nx = point.x + dx;
+              const ny = point.y + dy;
+              if (isGridCoordInBounds(nx, ny) && newGrid[ny][nx] !== color) {
+                newGrid[ny][nx] = color;
+                changed = true;
               }
             }
           }
-        } else {
-          if (x >= 0 && x < gridSize && y >= 0 && y < gridSize) {
-            if (newGrid[y][x] !== color) {
-              newGrid[y][x] = color;
-              changed = true;
-            }
-          }
-        }
-      };
-
-      if (tool === 'line') {
-        let currX = x0;
-        let currY = y0;
-        const dx = Math.abs(x1 - x0);
-        const dy = Math.abs(y1 - y0);
-        const sx = (x0 < x1) ? 1 : -1;
-        const sy = (y0 < y1) ? 1 : -1;
-        let err = dx - dy;
-
-        while (true) {
-          setPixel(currX, currY, true);
-          if (currX === x1 && currY === y1) break;
-          const e2 = 2 * err;
-          if (e2 > -dy) { err -= dy; currX += sx; }
-          if (e2 < dx) { err += dx; currY += sy; }
-        }
-      } else if (tool === 'rect') {
-        const minX = Math.min(x0, x1);
-        const maxX = Math.max(x0, x1);
-        const minY = Math.min(y0, y1);
-        const maxY = Math.max(y0, y1);
-        for (let y = minY; y <= maxY; y++) {
-          for (let x = minX; x <= maxX; x++) {
-            setPixel(x, y);
-          }
-        }
-      } else if (tool === 'circle') {
-        const radius = Math.floor(Math.sqrt(Math.pow(x1 - x0, 2) + Math.pow(y1 - y0, 2)));
-        for (let y = y0 - radius; y <= y0 + radius; y++) {
-          for (let x = x0 - radius; x <= x0 + radius; x++) {
-            if (Math.pow(x - x0, 2) + Math.pow(y - y0, 2) <= radius * radius) {
-              setPixel(x, y);
-            }
-          }
+        } else if (isGridCoordInBounds(point.x, point.y) && newGrid[point.y][point.x] !== color) {
+          newGrid[point.y][point.x] = color;
+          changed = true;
         }
       }
 
@@ -547,58 +764,144 @@ export default function App() {
     });
   };
 
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (isPlaying) return;
-    const tool = getActiveTool();
-    if (e.button === 2 || (isSpaceDown.current && e.button === 0) || tool === 'move') {
-      isPanning.current = true;
-      lastPanPoint.current = { x: e.clientX, y: e.clientY };
-      return;
-    }
-    const coords = getPointerCoords(e);
-    if (!coords) return;
-
-    if (tool === 'frame-move' || tool === 'frame-rotate' || tool === 'frame-scale') {
-      isDrawing.current = true;
-      strokeStart.current = { x: e.clientX, y: e.clientY };
-      saveHistory(animState); // pre-save
-      return;
-    }
-
-    if (coords.gridX >= 0 && coords.gridX < gridSize && coords.gridY >= 0 && coords.gridY < gridSize) {
-      if (currentTool === 'picker') {
-        let picked = null;
-        for (let i = layers.length - 1; i >= 0; i--) {
-          if (layers[i].visible && layers[i].grid[coords.gridY][coords.gridX]) {
-            picked = layers[i].grid[coords.gridY][coords.gridX];
-            break;
-          }
-        }
-        if (picked) setCurrentColor(picked);
-        setCurrentTool('brush');
-        return;
+  const capturePointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    activePointerId.current = e.pointerId;
+    try {
+      if (!e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.setPointerCapture(e.pointerId);
       }
-
-      isDrawing.current = true;
-      strokeStart.current = { x: coords.gridX, y: coords.gridY };
-      lastDrawn.current = { x: coords.gridX, y: coords.gridY };
-
-      if (['brush', 'eraser', 'line', 'rect', 'circle', 'fill'].includes(tool)) {
-        saveHistory(animState);
-      }
-
-      if (['line', 'rect', 'circle', 'select'].includes(tool)) {
-        previewCanvasRef.current?.drawPreview(tool as PreviewTool, coords.gridX, coords.gridY, coords.gridX, coords.gridY, e.button === 2 ? null : currentColor);
-      } else if (tool === 'fill') {
-        isDrawing.current = false;
-        handleFill(coords.gridX, coords.gridY, e.button === 2);
-      } else {
-        applyTool(coords.gridX, coords.gridY, e.button === 2);
-      }
+    } catch {
+      activePointerId.current = e.pointerId;
     }
   };
 
-  const handlePointerMove = (e: React.PointerEvent) => {
+  const resetInteractionState = () => {
+    isPanning.current = false;
+    lastPanPoint.current = null;
+    isDrawing.current = false;
+    strokeStart.current = null;
+    dragCurrent.current = null;
+    lastBrushPoint.current = null;
+    activePointerId.current = null;
+    transformSessionRef.current = null;
+    setTransformHud(null);
+  };
+
+  const finishInteraction = (button: number) => {
+    if (isPanning.current) {
+      resetInteractionState();
+      return;
+    }
+
+    const tool = getActiveTool();
+    if (isDrawing.current) {
+      if (['line', 'rect', 'circle'].includes(tool) && strokeStart.current && dragCurrent.current) {
+        commitGeometry(tool, strokeStart.current.x, strokeStart.current.y, dragCurrent.current.x, dragCurrent.current.y, button === 2);
+      }
+      if (['line', 'rect', 'circle', 'select'].includes(tool)) {
+        previewCanvasRef.current?.clear();
+      }
+    }
+
+    resetInteractionState();
+  };
+
+  const handlePointerLeave = () => {
+    if (isDrawing.current || isPanning.current) return;
+    resetCanvasHover();
+    updatePickerHoverColor(null);
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isPlaying) return;
+    if (activePointerId.current !== null) return;
+
+    const tool = getActiveTool();
+    const shouldPan = (isSpaceDown.current && e.button === 0) || e.button === 1 || tool === 'move';
+    if (shouldPan) {
+      isPanning.current = true;
+      lastPanPoint.current = { x: e.clientX, y: e.clientY };
+      capturePointer(e);
+      return;
+    }
+
+    if (isFrameTransformTool(tool)) {
+      const pointer = getPointerPosition(e);
+      const anchorLayer = getTransformAnchorLayer();
+      const layersToTransform = selectedTransformLayers.length > 0 ? selectedTransformLayers : (anchorLayer ? [anchorLayer] : []);
+      if (!pointer || !anchorLayer || layersToTransform.length === 0) return;
+
+      const origin = getLayerCenterInContainer(anchorLayer.transform);
+      const initialTransforms = Object.fromEntries(
+        layersToTransform.map(layer => [layer.id, { ...layer.transform }]),
+      );
+      const startAngle = (Math.atan2(pointer.mouseY - origin.y, pointer.mouseX - origin.x) * 180) / Math.PI;
+      const startDistance = Math.max(Math.hypot(pointer.mouseX - origin.x, pointer.mouseY - origin.y), 1);
+      const session: TransformSession = {
+        tool,
+        anchorLayerId: anchorLayer.id,
+        startPointer: { x: pointer.mouseX, y: pointer.mouseY },
+        origin,
+        startAngle,
+        startDistance,
+        initialTransforms,
+      };
+
+      isDrawing.current = true;
+      transformSessionRef.current = session;
+      pushUndoSnapshot(animState);
+      setTransformHud(buildTransformHud(
+        tool,
+        anchorLayer.transform,
+        { deltaGridX: 0, deltaGridY: 0, deltaAngle: 0, scaleFactor: 1 },
+        { x: pointer.mouseX, y: pointer.mouseY },
+        origin,
+        layersToTransform.length,
+      ));
+      capturePointer(e);
+      return;
+    }
+
+    const coords = getPointerCoords(e);
+    if (!coords) return;
+
+    if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
+
+    if (tool === 'picker') {
+      const picked = pickTopmostVisibleLayerAt(coords.mouseX, coords.mouseY);
+      if (picked) {
+        setCurrentColor(picked);
+        const restoreTool = lastNonPickerToolRef.current !== 'picker'
+          ? lastNonPickerToolRef.current
+          : 'brush';
+        activateTool(restoreTool);
+      }
+      return;
+    }
+
+    isDrawing.current = true;
+    strokeStart.current = { x: coords.gridX, y: coords.gridY };
+    dragCurrent.current = { x: coords.gridX, y: coords.gridY };
+    lastBrushPoint.current = { x: coords.gridX, y: coords.gridY };
+    capturePointer(e);
+
+    if (['brush', 'eraser', 'line', 'rect', 'circle', 'fill'].includes(tool)) {
+      pushUndoSnapshot(animState);
+    }
+
+    if (['line', 'rect', 'circle', 'select'].includes(tool)) {
+      previewCanvasRef.current?.drawPreview(tool as PreviewTool, coords.gridX, coords.gridY, coords.gridX, coords.gridY, e.button === 2 ? null : currentColor);
+    } else if (tool === 'fill') {
+      isDrawing.current = false;
+      handleFill(coords.gridX, coords.gridY, e.button === 2);
+    } else {
+      applyTool(coords.gridX, coords.gridY, e.button === 2);
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
+
     if (isPanning.current && lastPanPoint.current) {
       const dx = e.clientX - lastPanPoint.current.x;
       const dy = e.clientY - lastPanPoint.current.y;
@@ -613,116 +916,93 @@ export default function App() {
 
     const coords = getPointerCoords(e);
     if (!coords) return;
+    const tool = getActiveTool();
+    if (tool === 'picker' && isGridCoordInBounds(coords.gridX, coords.gridY)) {
+      updatePickerHoverColor(pickTopmostVisibleLayerAt(coords.mouseX, coords.mouseY));
+    } else {
+      updatePickerHoverColor(null);
+    }
     updateHover(coords.gridX, coords.gridY, true);
 
-    const tool = getActiveTool();
+    if (!isDrawing.current) return;
 
-    if (isDrawing.current && strokeStart.current) {
-      if (tool === 'frame-move') {
-        const dx = (e.clientX - strokeStart.current.x) / pixelSize;
-        const dy = (e.clientY - strokeStart.current.y) / pixelSize;
-        strokeStart.current = { x: e.clientX, y: e.clientY };
-        setAnimState(prev => {
-          const frame = { ...prev.frames[prev.activeFrameIndex] };
-          const newLayers = [...frame.layers];
-          
-          prev.selectedLayerIds.forEach(id => {
-            const layerIdx = newLayers.findIndex(l => l.id === id);
-            if (layerIdx !== -1) {
-              const layer = { ...newLayers[layerIdx] };
-              layer.transform = { 
-                ...layer.transform, 
-                x: layer.transform.x + dx, 
-                y: layer.transform.y + dy 
-              };
-              newLayers[layerIdx] = layer;
-            }
-          });
+    if (isFrameTransformTool(tool)) {
+      const session = transformSessionRef.current;
+      if (!session) return;
 
-          frame.layers = newLayers;
-          const nextFrames = [...prev.frames];
-          nextFrames[prev.activeFrameIndex] = frame;
-          return { ...prev, frames: nextFrames };
+      const metrics = getTransformMetrics(session, coords.mouseX, coords.mouseY);
+      const anchorInitialTransform = session.initialTransforms[session.anchorLayerId];
+      if (!anchorInitialTransform) return;
+
+      setAnimState(prev => {
+        const frame = { ...prev.frames[prev.activeFrameIndex] };
+        const newLayers = [...frame.layers];
+
+        Object.entries(session.initialTransforms).forEach(([id, initialTransform]) => {
+          const layerIdx = newLayers.findIndex(l => l.id === id);
+          if (layerIdx !== -1) {
+            const layer = { ...newLayers[layerIdx] };
+            layer.transform = getNextTransform(session.tool, initialTransform, metrics);
+            newLayers[layerIdx] = layer;
+          }
         });
-      } else if (tool === 'frame-rotate') {
-        // Simplified rotation based on X drag
-        const dx = e.clientX - strokeStart.current.x;
-        strokeStart.current = { x: e.clientX, y: e.clientY };
-        setAnimState(prev => {
-          const frame = { ...prev.frames[prev.activeFrameIndex] };
-          const newLayers = [...frame.layers];
-          
-          prev.selectedLayerIds.forEach(id => {
-            const layerIdx = newLayers.findIndex(l => l.id === id);
-            if (layerIdx !== -1) {
-              const layer = { ...newLayers[layerIdx] };
-              layer.transform = { 
-                ...layer.transform, 
-                rotation: (layer.transform.rotation + dx) % 360 
-              };
-              newLayers[layerIdx] = layer;
-            }
-          });
 
-          frame.layers = newLayers;
-          const nextFrames = [...prev.frames];
-          nextFrames[prev.activeFrameIndex] = frame;
-          return { ...prev, frames: nextFrames };
-        });
-      } else if (tool === 'frame-scale') {
-        // Simplified scale based on Y drag
-        const dy = (strokeStart.current.y - e.clientY) / 100;
-        strokeStart.current = { x: e.clientX, y: e.clientY };
-        setAnimState(prev => {
-          const frame = { ...prev.frames[prev.activeFrameIndex] };
-          const newLayers = [...frame.layers];
-          
-          prev.selectedLayerIds.forEach(id => {
-            const layerIdx = newLayers.findIndex(l => l.id === id);
-            if (layerIdx !== -1) {
-              const layer = { ...newLayers[layerIdx] };
-              layer.transform = { 
-                ...layer.transform, 
-                scale: Math.max(0.1, Math.min(5.0, layer.transform.scale + dy)) 
-              };
-              newLayers[layerIdx] = layer;
-            }
-          });
+        frame.layers = newLayers;
+        const nextFrames = [...prev.frames];
+        nextFrames[prev.activeFrameIndex] = frame;
+        return { ...prev, frames: nextFrames };
+      });
 
-          frame.layers = newLayers;
-          const nextFrames = [...prev.frames];
-          nextFrames[prev.activeFrameIndex] = frame;
-          return { ...prev, frames: nextFrames };
-        });
-      } else if (['line', 'rect', 'circle', 'select'].includes(tool)) {
-        previewCanvasRef.current?.drawPreview(tool as PreviewTool, strokeStart.current.x, strokeStart.current.y, coords.gridX, coords.gridY, e.buttons === 2 ? null : currentColor);
+      const anchorNextTransform = getNextTransform(session.tool, anchorInitialTransform, metrics);
+      setTransformHud(buildTransformHud(
+        session.tool,
+        anchorNextTransform,
+        metrics,
+        { x: coords.mouseX, y: coords.mouseY },
+        session.origin,
+        Object.keys(session.initialTransforms).length,
+      ));
+      return;
+    }
+
+    if (strokeStart.current) {
+      if (['line', 'rect', 'circle', 'select'].includes(tool)) {
+        if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
+        dragCurrent.current = { x: coords.gridX, y: coords.gridY };
+        previewCanvasRef.current?.drawPreview(tool as PreviewTool, strokeStart.current.x, strokeStart.current.y, coords.gridX, coords.gridY, (e.buttons & 2) === 2 ? null : currentColor);
       } else if (tool !== 'fill') {
-        if (lastDrawn.current?.x === coords.gridX && lastDrawn.current?.y === coords.gridY) return;
-        applyTool(coords.gridX, coords.gridY, e.buttons === 2);
-        lastDrawn.current = { x: coords.gridX, y: coords.gridY };
+        if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
+        if (lastBrushPoint.current?.x === coords.gridX && lastBrushPoint.current?.y === coords.gridY) return;
+        if (lastBrushPoint.current) {
+          applyStrokeSegment(lastBrushPoint.current, { x: coords.gridX, y: coords.gridY }, (e.buttons & 2) === 2);
+        }
+        lastBrushPoint.current = { x: coords.gridX, y: coords.gridY };
       }
     }
   };
 
-  const handlePointerUp = (e: React.PointerEvent) => {
-    if (isPanning.current) {
-      isPanning.current = false;
-      lastPanPoint.current = null;
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activePointerId.current !== null && e.pointerId !== activePointerId.current) {
       return;
     }
-    const tool = getActiveTool();
-    if (isDrawing.current) {
-      if (['line', 'rect', 'circle'].includes(tool) && strokeStart.current && lastDrawn.current) {
-        commitGeometry(tool, strokeStart.current.x, strokeStart.current.y, lastDrawn.current.x, lastDrawn.current.y, e.button === 2);
-        previewCanvasRef.current?.clear();
-      }
+    finishInteraction(e.button);
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activePointerId.current !== null && e.pointerId !== activePointerId.current) {
+      return;
     }
-    isDrawing.current = false;
-    lastDrawn.current = null;
+    finishInteraction(0);
+  };
+
+  const handleLostPointerCapture = () => {
+    if (activePointerId.current === null) return;
+    finishInteraction(0);
   };
 
   // --- Layer Management ---
   const addLayer = () => {
+    pushUndoSnapshot(animState);
     setAnimState(prev => {
       const nextLayers = [...prev.frames[prev.activeFrameIndex].layers, {
         id: generateId(),
@@ -741,13 +1021,13 @@ export default function App() {
         activeLayerId: nextLayers[nextLayers.length - 1].id,
         selectedLayerIds: [nextLayers[nextLayers.length - 1].id]
       };
-      saveHistory(nextState);
       return nextState;
     });
   };
 
   const deleteLayer = (id: string) => {
     if (layers.length <= 1) return;
+    pushUndoSnapshot(animState);
     setAnimState(prev => {
       const nextLayers = prev.frames[prev.activeFrameIndex].layers.filter(l => l.id !== id);
       const frame = { ...prev.frames[prev.activeFrameIndex], layers: nextLayers };
@@ -765,20 +1045,18 @@ export default function App() {
         activeLayerId: nextLayerId,
         selectedLayerIds: nextSelected
       };
-      saveHistory(nextState);
       return nextState;
     });
   };
 
   const toggleLayerVisibility = (id: string) => {
+    pushUndoSnapshot(animState);
     setAnimState(prev => {
       const nextLayers = prev.frames[prev.activeFrameIndex].layers.map(l => l.id === id ? { ...l, visible: !l.visible } : l);
       const frame = { ...prev.frames[prev.activeFrameIndex], layers: nextLayers };
       const nextFrames = [...prev.frames];
       nextFrames[prev.activeFrameIndex] = frame;
-      const nextState = { ...prev, frames: nextFrames };
-      saveHistory(nextState);
-      return nextState;
+      return { ...prev, frames: nextFrames };
     });
   };
 
@@ -825,14 +1103,35 @@ export default function App() {
   };
 
   const handleExportGif = async () => {
-    const blob = await exportGif(frames, gridSize, 8);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'animation.gif';
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const blob = await exportGif(frames, gridSize, 8);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'animation.gif';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to export GIF.';
+      window.alert(message);
+    }
   };
+
+  const transformGuideLayers = selectedTransformLayers.length > 0
+    ? selectedTransformLayers
+    : (activeLayer ? [activeLayer] : []);
+  const showTransformGuides = Boolean(frameTransformTool && transformGuideLayers.length > 0);
+  const visibleTransformHud = frameTransformTool ? transformHud : null;
+  const canvasCursor = (() => {
+    if (isSpacePressed || currentTool === 'move') return 'grab';
+    if (currentTool === 'picker') return 'copy';
+    if (frameTransformTool === 'frame-move') return visibleTransformHud ? 'grabbing' : 'grab';
+    if (frameTransformTool === 'frame-scale') return 'nwse-resize';
+    return 'crosshair';
+  })();
+  const pickerStatusText = currentTool === 'picker'
+    ? (pickerHoverColor ? `Pick: ${pickerHoverColor.toUpperCase()}` : 'Pick: empty pixel')
+    : null;
 
   return (
     <div className="layout">
@@ -841,28 +1140,28 @@ export default function App() {
         <div className="sidebar">
           <div className="app-logo">Pixly</div>
           <div className="tool-separator" />
-          <button className={`tool-icon-btn ${currentTool === 'brush' ? 'active' : ''}`} onClick={() => setCurrentTool('brush')} title="Brush (B)"><Brush size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'eraser' ? 'active' : ''}`} onClick={() => setCurrentTool('eraser')} title="Eraser (E)"><Eraser size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'fill' ? 'active' : ''}`} onClick={() => setCurrentTool('fill')} title="Fill (G)"><PaintBucket size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'picker' ? 'active' : ''}`} onClick={() => setCurrentTool('picker')} title="Eyedropper (I)"><Pipette size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'line' ? 'active' : ''}`} onClick={() => setCurrentTool('line')} title="Line (L)"><Minus size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'rect' ? 'active' : ''}`} onClick={() => setCurrentTool('rect')} title="Rectangle (R)"><Square size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'circle' ? 'active' : ''}`} onClick={() => setCurrentTool('circle')} title="Circle (C)"><Circle size={20} /></button>
+          <button className={`tool-icon-btn ${currentTool === 'brush' ? 'active' : ''}`} onClick={() => activateTool('brush')} title="Brush (B)"><Brush size={20} /></button>
+          <button className={`tool-icon-btn ${currentTool === 'eraser' ? 'active' : ''}`} onClick={() => activateTool('eraser')} title="Eraser (E)"><Eraser size={20} /></button>
+          <button className={`tool-icon-btn ${currentTool === 'fill' ? 'active' : ''}`} onClick={() => activateTool('fill')} title="Fill (G)"><PaintBucket size={20} /></button>
+          <button className={`tool-icon-btn ${currentTool === 'picker' ? 'active' : ''}`} onClick={() => activateTool('picker')} title="Eyedropper (I)"><Pipette size={20} /></button>
+          <button className={`tool-icon-btn ${currentTool === 'line' ? 'active' : ''}`} onClick={() => activateTool('line')} title="Line (L)"><Minus size={20} /></button>
+          <button className={`tool-icon-btn ${currentTool === 'rect' ? 'active' : ''}`} onClick={() => activateTool('rect')} title="Rectangle (R)"><Square size={20} /></button>
+          <button className={`tool-icon-btn ${currentTool === 'circle' ? 'active' : ''}`} onClick={() => activateTool('circle')} title="Circle (C)"><Circle size={20} /></button>
           
           <div className="tool-separator" />
           
           {/* Frame motion tools */}
-          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-move' ? 'active' : ''}`} onClick={() => setCurrentTool('frame-move')} disabled={!animationMode} title="Move Frame"><Move size={20} /></button>
-          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-rotate' ? 'active' : ''}`} onClick={() => setCurrentTool('frame-rotate')} disabled={!animationMode} title="Rotate Frame (drag X)"><RefreshCwIcon size={20} /></button>
-          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-scale' ? 'active' : ''}`} onClick={() => setCurrentTool('frame-scale')} disabled={!animationMode} title="Scale Frame (drag Y)"><MaximizeIcon size={20} /></button>
+          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-move' ? 'active' : ''}`} onClick={() => activateTool('frame-move')} disabled={!animationMode} title="Move Selection"><Move size={20} /></button>
+          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-rotate' ? 'active' : ''}`} onClick={() => activateTool('frame-rotate')} disabled={!animationMode} title="Rotate Selection (drag around center)"><RefreshCwIcon size={20} /></button>
+          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-scale' ? 'active' : ''}`} onClick={() => activateTool('frame-scale')} disabled={!animationMode} title="Scale Selection (drag toward or away from center)"><MaximizeIcon size={20} /></button>
 
           <div className="tool-separator" />
           
           <button className={`tool-icon-btn ${animationMode ? 'active' : ''}`} onClick={() => {
             const nextMode = !animationMode;
             setAnimationMode(nextMode);
-            if (!nextMode && ['frame-move', 'frame-rotate', 'frame-scale'].includes(currentTool)) {
-              setCurrentTool('brush');
+            if (!nextMode && isFrameTransformTool(currentTool)) {
+              activateTool('brush');
             }
           }} title="Toggle Animation Mode"><Film size={20} /></button>
           
@@ -874,27 +1173,64 @@ export default function App() {
 
           <div style={{ flex: 1 }} />
           
-          <button className="tool-icon-btn" onClick={handleUndo} disabled={historyRef.current.length <= 1}><Undo size={20} /></button>
-          <button className="tool-icon-btn" onClick={handleRedo} disabled={redoRef.current.length === 0}><Redo size={20} /></button>
+          <button className="tool-icon-btn" onClick={handleUndo} disabled={!canUndo}><Undo size={20} /></button>
+          <button className="tool-icon-btn" onClick={handleRedo} disabled={!canRedo}><Redo size={20} /></button>
           <button className="tool-icon-btn" style={{ color: animationMode ? '#10b981' : undefined }} disabled={!animationMode} onClick={handleExportGif} title="Export GIF"><Video size={20} /></button>
         </div>
 
         <div className="main">
           <div 
             ref={containerRef}
-            style={{ width: '100%', height: '100%', position: 'relative', cursor: isSpaceDown.current ? 'grab' : 'crosshair' }}
+            style={{ width: '100%', height: '100%', position: 'relative', cursor: canvasCursor }}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerUp}
+            onPointerCancel={handlePointerCancel}
+            onPointerLeave={handlePointerLeave}
+            onLostPointerCapture={handleLostPointerCapture}
             onContextMenu={e => e.preventDefault()}
           >
-            <div ref={transformContainerRef} style={{ position: 'absolute', top: 0, left: 0, transformOrigin: '0 0' }}>
+            {frameTransformTool && (
+              <div className="transform-mode-hint">
+                <strong>{getFrameToolTitle(frameTransformTool)}</strong>
+                <span>{getFrameToolHint(frameTransformTool)}</span>
+              </div>
+            )}
+
+            {visibleTransformHud && visibleTransformHud.tool !== 'frame-move' && (
+              <svg className="transform-pointer-overlay" aria-hidden="true">
+                <line
+                  x1={visibleTransformHud.origin.x}
+                  y1={visibleTransformHud.origin.y}
+                  x2={visibleTransformHud.pointer.x}
+                  y2={visibleTransformHud.pointer.y}
+                />
+                <circle cx={visibleTransformHud.origin.x} cy={visibleTransformHud.origin.y} r="5" />
+                <circle cx={visibleTransformHud.pointer.x} cy={visibleTransformHud.pointer.y} r="4" />
+              </svg>
+            )}
+
+            {visibleTransformHud && (
+              <div
+                className="transform-hud"
+                style={{
+                  left: visibleTransformHud.pointer.x,
+                  top: visibleTransformHud.pointer.y,
+                }}
+              >
+                <div className="transform-hud-title">{visibleTransformHud.title}</div>
+                <div className="transform-hud-value">{visibleTransformHud.value}</div>
+                <div className="transform-hud-meta">{visibleTransformHud.meta}</div>
+                <div className="transform-hud-hint">{visibleTransformHud.hint}</div>
+              </div>
+            )}
+
+            <div ref={transformContainerRef} style={{ position: 'absolute', top: 0, left: 0, transformOrigin: '0 0', overflow: 'visible' }}>
               <Canvas ref={canvasRef} gridSize={gridSize} pixelSize={pixelSize} showGrid={showGrid} />
               <div style={{
                 position: 'absolute', top: 0, left: 0,
-                width: `${gridSize * pixelSize}px`,
-                height: `${gridSize * pixelSize}px`,
+                width: `${transformGuideSize}px`,
+                height: `${transformGuideSize}px`,
                 transformOrigin: 'center',
                 transform: getForwardCssTransform(),
                 pointerEvents: 'none'
@@ -902,6 +1238,45 @@ export default function App() {
                 <PreviewCanvas ref={previewCanvasRef} gridSize={gridSize} pixelSize={pixelSize} brushSize={brushSize} />
                 <div ref={hoverOverlayRef} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', display: 'none', boxSizing: 'border-box' }} />
               </div>
+              {showTransformGuides && (
+                <div
+                  className="transform-guide-overlay"
+                  style={{ width: `${transformGuideSize}px`, height: `${transformGuideSize}px` }}
+                >
+                  {transformGuideLayers.map(layer => {
+                    const isActiveGuide = layer.id === activeLayerId;
+                    const showRotateOrbit = frameTransformTool === 'frame-rotate' && isActiveGuide;
+                    const showScaleHandles = frameTransformTool === 'frame-scale';
+
+                    return (
+                      <div
+                        key={layer.id}
+                        className={`transform-guide ${isActiveGuide ? 'active' : ''} ${layer.visible ? '' : 'hidden-layer'}`}
+                        style={{
+                          width: `${transformGuideSize}px`,
+                          height: `${transformGuideSize}px`,
+                          transformOrigin: 'center',
+                          transform: `translate(${layer.transform.x * pixelSize}px, ${layer.transform.y * pixelSize}px) rotate(${layer.transform.rotation}deg) scale(${layer.transform.scale})`,
+                        }}
+                      >
+                        <div className="transform-guide-box" />
+                        <div className="transform-guide-center">
+                          <span className="transform-guide-center-dot" />
+                        </div>
+                        {showRotateOrbit && <div className="transform-guide-orbit" />}
+                        {showScaleHandles && (
+                          <>
+                            <span className="transform-guide-corner top-left" />
+                            <span className="transform-guide-corner top-right" />
+                            <span className="transform-guide-corner bottom-left" />
+                            <span className="transform-guide-corner bottom-right" />
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -962,7 +1337,7 @@ export default function App() {
           onAddFrame={handleAddFrame}
           onDuplicateFrame={handleDuplicateFrame}
           onDeleteFrame={handleDeleteFrame}
-          onTogglePlay={() => togglePlay()}
+          onTogglePlay={() => togglePlay(activeFrameIndex)}
           onToggleOnionSkin={() => setOnionSkinEnabled(!onionSkinEnabled)}
           onSetDuration={handleSetDuration}
         />
@@ -970,10 +1345,15 @@ export default function App() {
 
       <div className="bottom-bar">
         <div className="bottom-bar-section">
-          <input type="color" value={currentColor} onChange={e => { setCurrentColor(e.target.value); setCurrentTool('brush'); }} className="color-picker-input" />
+          <input type="color" value={currentColor} onChange={e => { setCurrentColor(e.target.value); activateTool('brush'); }} className="color-picker-input" />
+          <div className="current-color-readout">
+            <span className="current-color-chip" style={{ backgroundColor: currentColor }} />
+            <span className="current-color-code">{currentColor.toUpperCase()}</span>
+            {pickerStatusText && <span className="current-color-status">{pickerStatusText}</span>}
+          </div>
           <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
             {DEFAULT_PALETTE.map(color => (
-              <div key={color} className="palette-swatch" style={{ backgroundColor: color }} onClick={() => { setCurrentColor(color); setCurrentTool('brush'); }} />
+              <div key={color} className="palette-swatch" style={{ backgroundColor: color }} onClick={() => { setCurrentColor(color); activateTool('brush'); }} />
             ))}
           </div>
         </div>
