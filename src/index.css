@@ -25,7 +25,6 @@ body {
 }
 
 .sidebar {
-  width: 64px;
   background: #232323;
   display: flex;
   flex-direction: column;
@@ -34,6 +33,8 @@ body {
   gap: 8px;
   z-index: 10;
   box-shadow: 2px 0 5px rgba(0, 0, 0, 0.2);
+  position: relative;
+  min-width: 64px;
 }
 
 .app-logo {
@@ -57,13 +58,14 @@ body {
 }
 
 .right-sidebar {
-  width: 240px;
   background: #232323;
   display: flex;
   flex-direction: column;
   border-left: 1px solid #111;
   z-index: 10;
   box-shadow: -2px 0 5px rgba(0, 0, 0, 0.2);
+  position: relative;
+  min-width: 150px;
 }
 
 .right-sidebar-header {
@@ -212,6 +214,48 @@ body {
   border: none;
   color: #aaa;
   transition: all 0.1s;
+}
+
+.sidebar-tools {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(40px, 1fr));
+  gap: 8px;
+  width: 100%;
+  padding: 0 8px;
+}
+
+.sidebar-tools.size-tools {
+  grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
+}
+
+.sidebar-tools .tool-icon-btn {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.sidebar-tools.bottom {
+  margin-bottom: 8px;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 100;
+  transition: background 0.1s;
+}
+
+.sidebar-resizer:hover, .sidebar-resizer:active {
+  background: rgba(79, 70, 229, 0.5);
+}
+
+.sidebar-resizer.right {
+  left: -3px;
+  right: auto;
 }
 
 .tool-icon-btn:hover:not(:disabled) {

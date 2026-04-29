@@ -18,7 +18,7 @@ import {
   CheckSquare
 } from 'lucide-react';
 
-const MIN_PIXEL_SIZE = 6;
+const MIN_PIXEL_SIZE = 1;
 const DEFAULT_PALETTE = ['#000000', '#ffffff', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6'];
 const FRAME_TRANSFORM_TOOLS = ['frame-move', 'frame-rotate', 'frame-scale'] as const;
 
@@ -139,6 +139,14 @@ export default function App() {
   const canUndo = undoStack.length > 0;
   const canRedo = redoStack.length > 0;
 
+  // --- UI State ---
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(64);
+  const [rightSidebarWidth, setRightSidebarWidth] = useState(240);
+  const isResizingLeft = useRef(false);
+  const isResizingRight = useRef(false);
+  const [showLeftSidebar, setShowLeftSidebar] = useState(true);
+  const [showRightSidebar, setShowRightSidebar] = useState(true);
+
   // --- File state ---
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -175,6 +183,9 @@ export default function App() {
   const coordsDisplayRef = useRef<HTMLSpanElement>(null);
 
   const panRef = useRef({ x: 0, y: 0 });
+  const pixelSizeRef = useRef(pixelSize);
+  pixelSizeRef.current = pixelSize; // Keep in sync every render
+  const hasCentered = useRef(false);
   const isPanning = useRef(false);
   const lastPanPoint = useRef<{ x: number, y: number } | null>(null);
   const isSpaceDown = useRef(false);
@@ -366,19 +377,39 @@ export default function App() {
   };
 
   // --- Zoom / Pan ---
-  const handleZoomCenter = (newPixelSize: number, mouseX: number, mouseY: number) => {
-    setPixelSize(oldPixelSize => {
-      const scale = newPixelSize / oldPixelSize;
-      const panX = panRef.current.x;
-      const panY = panRef.current.y;
-      panRef.current.x = Math.round(mouseX - (mouseX - panX) * scale);
-      panRef.current.y = Math.round(mouseY - (mouseY - panY) * scale);
-      if (transformContainerRef.current) {
-        transformContainerRef.current.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px)`;
-      }
-      return newPixelSize;
-    });
-  };
+  const handleZoom = useCallback((delta: number, mouseX: number, mouseY: number) => {
+    const oldPixelSize = pixelSizeRef.current;
+    let newPixelSize = oldPixelSize;
+    if (delta > 0) {
+      newPixelSize = oldPixelSize < 8 ? oldPixelSize + 1 : oldPixelSize + 4;
+      newPixelSize = Math.min(newPixelSize, 128);
+    } else if (delta < 0) {
+      newPixelSize = oldPixelSize <= 8 ? oldPixelSize - 1 : oldPixelSize - 4;
+      newPixelSize = Math.max(newPixelSize, MIN_PIXEL_SIZE);
+    }
+
+    if (newPixelSize === oldPixelSize) return;
+
+    const scale = newPixelSize / oldPixelSize;
+    const panX = panRef.current.x;
+    const panY = panRef.current.y;
+
+    const logicalW = gridSize * oldPixelSize;
+    const logicalH = gridSize * oldPixelSize;
+
+    // Clamp target to grid bounds to prevent canvas from flying away when zooming from the void
+    const targetX = Math.max(panX, Math.min(mouseX, panX + logicalW));
+    const targetY = Math.max(panY, Math.min(mouseY, panY + logicalH));
+
+    panRef.current.x = targetX - (targetX - panX) * scale;
+    panRef.current.y = targetY - (targetY - panY) * scale;
+    pixelSizeRef.current = newPixelSize; // Update synchronously to prevent rapid scroll jitter
+
+    if (transformContainerRef.current) {
+      transformContainerRef.current.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px)`;
+    }
+    setPixelSize(newPixelSize);
+  }, [gridSize]);
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -388,20 +419,55 @@ export default function App() {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      let newSize = pixelSize;
-      if (e.deltaY < 0) {
-        newSize = Math.min(Math.round(pixelSize + 4), 64);
-      } else {
-        newSize = Math.max(Math.round(pixelSize - 4), MIN_PIXEL_SIZE);
-      }
-      if (newSize !== pixelSize) {
-        handleZoomCenter(newSize, mouseX, mouseY);
-      }
+      const delta = e.deltaY < 0 ? 1 : -1;
+      handleZoom(delta, mouseX, mouseY);
     };
     const div = containerRef.current;
     div?.addEventListener('wheel', handleWheel, { passive: false });
     return () => div?.removeEventListener('wheel', handleWheel);
-  }, [pixelSize, showWelcome]);
+  }, [handleZoom, showWelcome]);
+
+  // --- Center canvas on load ---
+  useEffect(() => {
+    if (!showWelcome && !hasCentered.current && containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const logicalW = gridSize * pixelSize;
+      const logicalH = gridSize * pixelSize;
+      panRef.current = {
+        x: Math.round((rect.width - logicalW) / 2),
+        y: Math.round((rect.height - logicalH) / 2)
+      };
+      if (transformContainerRef.current) {
+        transformContainerRef.current.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px)`;
+      }
+      hasCentered.current = true;
+    }
+  }, [showWelcome, gridSize, pixelSize]);
+
+  // --- Sidebar Resize Logic ---
+  useEffect(() => {
+    const handleMove = (e: PointerEvent) => {
+      if (isResizingLeft.current) {
+        setLeftSidebarWidth(Math.max(64, Math.min(e.clientX, 400)));
+      }
+      if (isResizingRight.current) {
+        setRightSidebarWidth(Math.max(150, Math.min(window.innerWidth - e.clientX, 600)));
+      }
+    };
+    const handleUp = () => {
+      if (isResizingLeft.current || isResizingRight.current) {
+        isResizingLeft.current = false;
+        isResizingRight.current = false;
+        document.body.style.cursor = '';
+      }
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  }, []);
 
   // --- File Operations ---
   const handleSave = useCallback(async () => {
@@ -453,10 +519,7 @@ export default function App() {
     setUndoStack([]);
     setRedoStack([]);
     setShowWelcome(false);
-    panRef.current = { x: 0, y: 0 };
-    if (transformContainerRef.current) {
-      transformContainerRef.current.style.transform = `translate(0px, 0px)`;
-    }
+    hasCentered.current = false;
     addRecentFile(filePath, data.canvas.width);
   };
 
@@ -523,8 +586,14 @@ export default function App() {
 
       if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); handleUndo(); }
       if ((e.ctrlKey || e.metaKey) && key === 'y') { e.preventDefault(); handleRedo(); }
-      if (key === '+' || key === '=') setPixelSize(p => Math.min(Math.round(p + 4), 64));
-      if (key === '-' || key === '_') setPixelSize(p => Math.max(Math.round(p - 4), MIN_PIXEL_SIZE));
+      if (key === '+' || key === '=') {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) handleZoom(1, rect.width / 2, rect.height / 2);
+      }
+      if (key === '-' || key === '_') {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) handleZoom(-1, rect.width / 2, rect.height / 2);
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
@@ -686,7 +755,7 @@ export default function App() {
       return;
     }
     const isGeometryTool = ['line', 'rect', 'circle', 'select'].includes(tool);
-    if (pixelSize < 8 || !isActive || !isGridCoordInBounds(gridX, gridY) || (isDrawing.current && isGeometryTool)) {
+    if (!isActive || !isGridCoordInBounds(gridX, gridY) || (isDrawing.current && isGeometryTool)) {
       hideHoverOverlay();
       return;
     }
@@ -1244,6 +1313,9 @@ export default function App() {
     {
       label: 'View',
       items: [
+        { label: showLeftSidebar ? 'Hide Left Toolbar' : 'Show Left Toolbar', action: 'toggleLeftSidebar' },
+        { label: showRightSidebar ? 'Hide Right Toolbar' : 'Show Right Toolbar', action: 'toggleRightSidebar' },
+        { type: 'separator' },
         { label: showGrid ? 'Hide Grid' : 'Show Grid', action: 'toggleGrid' },
         { label: onionSkinEnabled ? 'Disable Onion Skin' : 'Enable Onion Skin', action: 'toggleOnionSkin' },
       ]
@@ -1251,6 +1323,8 @@ export default function App() {
     {
       label: 'Animation',
       items: [
+        { label: animationMode ? 'Disable Animation Mode' : 'Enable Animation Mode', action: 'toggleAnimationMode' },
+        { type: 'separator' },
         { label: 'Play/Pause', shortcut: 'Space', action: 'togglePlay' },
         { type: 'separator' },
         { label: 'Add Frame', action: 'addFrame' },
@@ -1269,7 +1343,7 @@ export default function App() {
   const fileName = currentFilePath
     ? currentFilePath.split(/[/\\]/).pop() || 'Untitled'
     : 'Untitled';
-  const titleSuffix = isDirty ? ' •' : '';
+  const titleSuffix = isDirty ? '• ' : '';
 
   const actions: ActionMap = {
     newFile: () => setShowWelcome(true),
@@ -1293,6 +1367,15 @@ export default function App() {
     },
     toggleGrid: () => setShowGrid(!showGrid),
     toggleOnionSkin: () => setOnionSkinEnabled(!onionSkinEnabled),
+    toggleLeftSidebar: () => setShowLeftSidebar(!showLeftSidebar),
+    toggleRightSidebar: () => setShowRightSidebar(!showRightSidebar),
+    toggleAnimationMode: () => {
+      const nextMode = !animationMode;
+      setAnimationMode(nextMode);
+      if (!nextMode && isFrameTransformTool(currentTool)) {
+        activateTool('brush');
+      }
+    },
     // @ts-ignore
     togglePlay: () => togglePlay(activeFrameIndex),
     addFrame: handleAddFrame,
@@ -1319,10 +1402,7 @@ export default function App() {
           setUndoStack([]);
           setRedoStack([]);
           setShowWelcome(false);
-          panRef.current = { x: 0, y: 0 };
-          if (transformContainerRef.current) {
-            transformContainerRef.current.style.transform = `translate(0px, 0px)`;
-          }
+          hasCentered.current = false;
         }}
         onLoadProject={(data, filePath) => loadProjectData(data, filePath)}
         onContinue={(data) => {
@@ -1335,10 +1415,7 @@ export default function App() {
           setUndoStack([]);
           setRedoStack([]);
           setShowWelcome(false);
-          panRef.current = { x: 0, y: 0 };
-          if (transformContainerRef.current) {
-            transformContainerRef.current.style.transform = `translate(0px, 0px)`;
-          }
+          hasCentered.current = false;
         }}
       />
     );
@@ -1346,50 +1423,60 @@ export default function App() {
 
   return (
     <div className="layout">
-      <MenuBar config={menuConfig} actions={actions} />
+      <MenuBar config={menuConfig} actions={actions} title="Pixly" subtitle={`${titleSuffix}${fileName}`} />
       {isPlaying && <div className="playback-badge">PLAYING</div>}
       <div className="workspace">
-        <div className="sidebar">
-          <div className="app-logo">Pixly</div>
-          <div style={{ fontSize: '10px', color: '#888', textAlign: 'center', padding: '0 4px', marginBottom: '2px', lineHeight: 1.2, wordBreak: 'break-all' }}>{fileName}{titleSuffix}</div>
-          <div className="tool-separator" />
-          <button className={`tool-icon-btn ${currentTool === 'brush' ? 'active' : ''}`} onClick={() => activateTool('brush')} title="Brush (B)"><Brush size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'eraser' ? 'active' : ''}`} onClick={() => activateTool('eraser')} title="Eraser (E)"><Eraser size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'fill' ? 'active' : ''}`} onClick={() => activateTool('fill')} title="Fill (G)"><PaintBucket size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'picker' ? 'active' : ''}`} onClick={() => activateTool('picker')} title="Eyedropper (I)"><Pipette size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'line' ? 'active' : ''}`} onClick={() => activateTool('line')} title="Line (L)"><Minus size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'rect' ? 'active' : ''}`} onClick={() => activateTool('rect')} title="Rectangle (R)"><Square size={20} /></button>
-          <button className={`tool-icon-btn ${currentTool === 'circle' ? 'active' : ''}`} onClick={() => activateTool('circle')} title="Circle (C)"><Circle size={20} /></button>
+        {showLeftSidebar && (
+          <div className="sidebar" style={{ width: leftSidebarWidth }}>
+            <div
+              className="sidebar-resizer"
+              onPointerDown={(e) => { e.preventDefault(); isResizingLeft.current = true; document.body.style.cursor = 'col-resize'; }}
+            />
 
-          <div className="tool-separator" />
+            <div className="sidebar-tools">
+              <button className={`tool-icon-btn ${currentTool === 'brush' ? 'active' : ''}`} onClick={() => activateTool('brush')} title="Brush (B)"><Brush size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'eraser' ? 'active' : ''}`} onClick={() => activateTool('eraser')} title="Eraser (E)"><Eraser size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'fill' ? 'active' : ''}`} onClick={() => activateTool('fill')} title="Fill (G)"><PaintBucket size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'picker' ? 'active' : ''}`} onClick={() => activateTool('picker')} title="Eyedropper (I)"><Pipette size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'line' ? 'active' : ''}`} onClick={() => activateTool('line')} title="Line (L)"><Minus size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'rect' ? 'active' : ''}`} onClick={() => activateTool('rect')} title="Rectangle (R)"><Square size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'circle' ? 'active' : ''}`} onClick={() => activateTool('circle')} title="Circle (C)"><Circle size={20} /></button>
+            </div>
 
-          {/* Frame motion tools */}
-          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-move' ? 'active' : ''}`} onClick={() => activateTool('frame-move')} disabled={!animationMode} title="Move Selection"><Move size={20} /></button>
-          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-rotate' ? 'active' : ''}`} onClick={() => activateTool('frame-rotate')} disabled={!animationMode} title="Rotate Selection (drag around center)"><RefreshCwIcon size={20} /></button>
-          <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-scale' ? 'active' : ''}`} onClick={() => activateTool('frame-scale')} disabled={!animationMode} title="Scale Selection (drag toward or away from center)"><MaximizeIcon size={20} /></button>
+            <div className="tool-separator" />
 
-          <div className="tool-separator" />
+            {/* Frame motion tools */}
+            <div className="sidebar-tools">
+              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-move' ? 'active' : ''}`} onClick={() => activateTool('frame-move')} disabled={!animationMode} title="Move Selection"><Move size={20} /></button>
+              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-rotate' ? 'active' : ''}`} onClick={() => activateTool('frame-rotate')} disabled={!animationMode} title="Rotate Selection (drag around center)"><RefreshCwIcon size={20} /></button>
+              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-scale' ? 'active' : ''}`} onClick={() => activateTool('frame-scale')} disabled={!animationMode} title="Scale Selection (drag toward or away from center)"><MaximizeIcon size={20} /></button>
+            </div>
 
-          <button className={`tool-icon-btn ${animationMode ? 'active' : ''}`} onClick={() => {
-            const nextMode = !animationMode;
-            setAnimationMode(nextMode);
-            if (!nextMode && isFrameTransformTool(currentTool)) {
-              activateTool('brush');
-            }
-          }} title="Toggle Animation Mode"><Film size={20} /></button>
+            <div className="tool-separator" />
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
-            {[1, 2, 3, 4, 5].map(size => (
-              <button key={size} className={`tool-icon-btn ${brushSize === size ? 'active' : ''}`} style={{ width: 28, height: 28, fontSize: 12, minHeight: 28 }} onClick={() => setBrushSize(size)}>{size}</button>
-            ))}
+            <div className="brush-size-container" style={{ width: '100%', padding: '0 12px', display: 'flex', flexDirection: 'column', gap: '6px', boxSizing: 'border-box' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#aaa', userSelect: 'none' }}>
+                <span>Size</span>
+                <span>{brushSize}px</span>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="24"
+                value={brushSize}
+                onChange={(e) => setBrushSize(parseInt(e.target.value, 10))}
+                style={{ width: '100%', cursor: 'pointer', accentColor: '#4f46e5' }}
+              />
+            </div>
+
+            <div style={{ flex: 1 }} />
+
+            <div className="sidebar-tools bottom">
+              <button className="tool-icon-btn" onClick={handleUndo} disabled={!canUndo}><Undo size={20} /></button>
+              <button className="tool-icon-btn" onClick={handleRedo} disabled={!canRedo}><Redo size={20} /></button>
+            </div>
           </div>
-
-          <div style={{ flex: 1 }} />
-
-          <button className="tool-icon-btn" onClick={handleUndo} disabled={!canUndo}><Undo size={20} /></button>
-          <button className="tool-icon-btn" onClick={handleRedo} disabled={!canRedo}><Redo size={20} /></button>
-          <button className="tool-icon-btn" style={{ color: animationMode ? '#10b981' : undefined }} disabled={!animationMode} onClick={handleExportGif} title="Export GIF"><Video size={20} /></button>
-        </div>
+        )}
 
         <div className="main">
           <div
@@ -1494,49 +1581,55 @@ export default function App() {
           </div>
         </div>
 
-        <div className="right-sidebar">
-          <div className="right-sidebar-header">
-            <span>Layers</span>
-            <button className="tool-icon-btn" style={{ width: 28, height: 28 }} onClick={addLayer}><Plus size={16} /></button>
-          </div>
-          <div className="layer-list">
-            {[...layers].reverse().map(layer => {
-              const isSelected = selectedLayerIds.includes(layer.id);
-              const isActive = activeLayerId === layer.id;
-              return (
-                <div
-                  key={layer.id}
-                  className={`layer-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
-                  onClick={(e) => handleLayerClick(layer.id, e)}
-                >
-                  <div className="layer-item-top">
-                    <button
-                      className={`layer-btn ${layer.visible ? 'eye-active' : ''}`}
-                      onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}
-                      title="Toggle Visibility"
-                    >
-                      {layer.visible ? <Eye size={16} /> : <EyeOff size={16} />}
-                    </button>
+        {showRightSidebar && (
+          <div className="right-sidebar" style={{ width: rightSidebarWidth }}>
+            <div
+              className="sidebar-resizer right"
+              onPointerDown={(e) => { e.preventDefault(); isResizingRight.current = true; document.body.style.cursor = 'col-resize'; }}
+            />
+            <div className="right-sidebar-header">
+              <span>Layers</span>
+              <button className="tool-icon-btn" style={{ width: 28, height: 28 }} onClick={addLayer}><Plus size={16} /></button>
+            </div>
+            <div className="layer-list">
+              {[...layers].reverse().map(layer => {
+                const isSelected = selectedLayerIds.includes(layer.id);
+                const isActive = activeLayerId === layer.id;
+                return (
+                  <div
+                    key={layer.id}
+                    className={`layer-item ${isActive ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
+                    onClick={(e) => handleLayerClick(layer.id, e)}
+                  >
+                    <div className="layer-item-top">
+                      <button
+                        className={`layer-btn ${layer.visible ? 'eye-active' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); toggleLayerVisibility(layer.id); }}
+                        title="Toggle Visibility"
+                      >
+                        {layer.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+                      </button>
 
-                    <button
-                      className={`layer-btn ${isSelected ? 'select-active' : ''}`}
-                      onClick={(e) => { e.stopPropagation(); toggleLayerSelection(layer.id); }}
-                      title="Toggle Selection for Transform"
-                    >
-                      {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
-                    </button>
+                      <button
+                        className={`layer-btn ${isSelected ? 'select-active' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); toggleLayerSelection(layer.id); }}
+                        title="Toggle Selection for Transform"
+                      >
+                        {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                      </button>
 
-                    <span className="layer-name">{layer.name}</span>
+                      <span className="layer-name">{layer.name}</span>
 
-                    <button className="layer-btn" onClick={(e) => { e.stopPropagation(); deleteLayer(layer.id); }} disabled={layers.length <= 1}>
-                      <Trash2 size={16} />
-                    </button>
+                      <button className="layer-btn" onClick={(e) => { e.stopPropagation(); deleteLayer(layer.id); }} disabled={layers.length <= 1}>
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {animationMode && (
