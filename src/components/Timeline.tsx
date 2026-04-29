@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, memo } from 'react';
+import { useRef, useEffect, useCallback, memo, useState } from 'react';
 import {
   Plus, Copy, Trash2, Play, Square,
   ChevronLeft, ChevronRight, Layers as OnionIcon
@@ -19,6 +19,8 @@ interface TimelineProps {
   onTogglePlay: () => void;
   onToggleOnionSkin: () => void;
   onSetDuration: (index: number, duration: number) => void;
+  onSetDurationAll: (duration: number) => void;
+  onReorderFrame: (oldIndex: number, newIndex: number) => void;
 }
 
 // ---------- Thumbnail renderer ----------
@@ -87,13 +89,21 @@ function renderThumbnail(
 // ---------- Single frame thumb ----------
 
 const FrameThumb = memo(({
-  frame, index, isActive, gridSize, onClick,
+  frame, index, isActive, gridSize, isDragging, dropTarget, draggable, onClick, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd
 }: {
   frame: Frame;
   index: number;
   isActive: boolean;
   gridSize: number;
+  isDragging: boolean;
+  dropTarget: 'left' | 'right' | null;
+  draggable: boolean;
   onClick: () => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (e: React.DragEvent) => void;
+  onDragEnd: () => void;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -105,8 +115,14 @@ const FrameThumb = memo(({
 
   return (
     <div
-      className={`frame-thumb ${isActive ? 'active' : ''}`}
+      className={`frame-thumb ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${dropTarget === 'left' ? 'drop-target-left' : ''} ${dropTarget === 'right' ? 'drop-target-right' : ''}`}
       onClick={onClick}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
     >
       <canvas ref={canvasRef} />
       <div className="frame-thumb-label">{index + 1}</div>
@@ -130,8 +146,39 @@ export default function Timeline({
   onTogglePlay,
   onToggleOnionSkin,
   onSetDuration,
+  onSetDurationAll,
+  onReorderFrame,
 }: TimelineProps) {
+  const [height, setHeight] = useState(110);
+  const isResizing = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Drag and drop state
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const [dropPosition, setDropPosition] = useState<'left' | 'right' | null>(null);
+
+  useEffect(() => {
+    const handleMove = (e: PointerEvent) => {
+      if (isResizing.current) {
+        // Timeline is at bottom above 40px bottom-bar
+        const newHeight = window.innerHeight - e.clientY - 40;
+        setHeight(Math.max(80, Math.min(newHeight, 500)));
+      }
+    };
+    const handleUp = () => {
+      if (isResizing.current) {
+        isResizing.current = false;
+        document.body.style.cursor = '';
+      }
+    };
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  }, []);
 
   // scroll active frame into view
   useEffect(() => {
@@ -152,7 +199,11 @@ export default function Timeline({
   }, [activeFrameIndex, frames.length, onSelectFrame]);
 
   return (
-    <div className="timeline">
+    <div className="timeline" style={{ height: `${height}px`, position: 'relative' }}>
+      <div 
+        className="timeline-resizer" 
+        onPointerDown={(e) => { e.preventDefault(); isResizing.current = true; document.body.style.cursor = 'row-resize'; }}
+      />
       {/* Controls */}
       <div className="timeline-controls">
         <button
@@ -205,7 +256,7 @@ export default function Timeline({
         </div>
 
         {/* Per-frame duration control */}
-        <div className="tl-duration-control">
+        <div className="tl-duration-control" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <label title="Frame duration (ms)">
             <span>⏱</span>
             <input
@@ -220,6 +271,15 @@ export default function Timeline({
             />
             <span style={{ opacity: 0.5 }}>ms</span>
           </label>
+          <button 
+            className="tl-btn" 
+            style={{ width: 'auto', padding: '0 8px', fontSize: '11px', whiteSpace: 'nowrap' }} 
+            onClick={() => onSetDurationAll(frames[activeFrameIndex]?.duration ?? 100)}
+            disabled={isPlaying}
+            title="Apply this duration to all frames"
+          >
+            Apply to All
+          </button>
         </div>
       </div>
 
@@ -232,7 +292,46 @@ export default function Timeline({
             index={i}
             isActive={i === activeFrameIndex}
             gridSize={gridSize}
+            isDragging={draggedIndex === i}
+            dropTarget={dropTargetIndex === i ? dropPosition : null}
+            draggable={!isPlaying && frames.length > 1}
             onClick={() => !isPlaying && onSelectFrame(i)}
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'move';
+              setDraggedIndex(i);
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (draggedIndex === null || draggedIndex === i) return;
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const isLeft = e.clientX < rect.left + rect.width / 2;
+              setDropTargetIndex(i);
+              setDropPosition(isLeft ? 'left' : 'right');
+            }}
+            onDragLeave={() => {
+              setDropTargetIndex(null);
+              setDropPosition(null);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (draggedIndex !== null && dropTargetIndex !== null) {
+                let newIndex = dropTargetIndex;
+                if (draggedIndex < dropTargetIndex && dropPosition === 'left') {
+                  newIndex -= 1;
+                } else if (draggedIndex > dropTargetIndex && dropPosition === 'right') {
+                  newIndex += 1;
+                }
+                onReorderFrame(draggedIndex, newIndex);
+              }
+              setDraggedIndex(null);
+              setDropTargetIndex(null);
+              setDropPosition(null);
+            }}
+            onDragEnd={() => {
+              setDraggedIndex(null);
+              setDropTargetIndex(null);
+              setDropPosition(null);
+            }}
           />
         ))}
       </div>

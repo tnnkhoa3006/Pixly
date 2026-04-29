@@ -14,7 +14,7 @@ import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
 
 import {
   Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle,
-  Move, Undo, Redo, Eye, EyeOff, Plus, Trash2, Video, Film, Grid3X3,
+  Move, Undo, Redo, Eye, EyeOff, Plus, Trash2, Grid3X3,
   CheckSquare
 } from 'lucide-react';
 
@@ -375,6 +375,34 @@ export default function App() {
       return { ...prev, frames: nextFrames };
     });
   };
+
+  const handleSetDurationAll = (duration: number) => {
+    pushUndoSnapshot(animState);
+    setAnimState(prev => {
+      const nextFrames = prev.frames.map(f => ({ ...f, duration }));
+      return { ...prev, frames: nextFrames };
+    });
+  };
+
+  const handleReorderFrame = useCallback((oldIndex: number, newIndex: number) => {
+    if (oldIndex === newIndex) return;
+    pushUndoSnapshot(animState);
+    setAnimState(prev => {
+      const nextFrames = [...prev.frames];
+      const [movedFrame] = nextFrames.splice(oldIndex, 1);
+      nextFrames.splice(newIndex, 0, movedFrame);
+      
+      let nextActiveIndex = prev.activeFrameIndex;
+      if (prev.activeFrameIndex === oldIndex) {
+        nextActiveIndex = newIndex;
+      } else if (prev.activeFrameIndex > oldIndex && prev.activeFrameIndex <= newIndex) {
+        nextActiveIndex--;
+      } else if (prev.activeFrameIndex < oldIndex && prev.activeFrameIndex >= newIndex) {
+        nextActiveIndex++;
+      }
+      return { ...prev, frames: nextFrames, activeFrameIndex: nextActiveIndex };
+    });
+  }, [animState]);
 
   // --- Zoom / Pan ---
   const handleZoom = useCallback((delta: number, mouseX: number, mouseY: number) => {
@@ -1646,6 +1674,8 @@ export default function App() {
           onTogglePlay={() => togglePlay(activeFrameIndex)}
           onToggleOnionSkin={() => setOnionSkinEnabled(!onionSkinEnabled)}
           onSetDuration={handleSetDuration}
+          onSetDurationAll={handleSetDurationAll}
+          onReorderFrame={handleReorderFrame}
         />
       )}
 
