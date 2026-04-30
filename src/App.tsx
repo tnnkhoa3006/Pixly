@@ -6,7 +6,7 @@ import WelcomeScreen from './components/WelcomeScreen';
 import { usePlayback } from './hooks/usePlayback';
 import { exportGif } from './utils/gifExport';
 import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './utils/drawing';
-import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform } from './utils';
+import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform, bakeLayerTransform } from './utils';
 import { saveProjectAs, saveProjectToPath, openProjectFile } from './utils/projectFile';
 import { autoSaveProject, addRecentFile } from './utils/autoSave';
 import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData } from './types';
@@ -15,7 +15,7 @@ import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
 import {
   Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle,
   Move, Undo, Redo, Eye, EyeOff, Plus, Trash2, Grid3X3,
-  CheckSquare
+  CheckSquare, Sun, CloudRain, Type, SprayCan
 } from 'lucide-react';
 
 const MIN_PIXEL_SIZE = 1;
@@ -57,6 +57,14 @@ const isFrameTransformTool = (tool: ToolType): tool is FrameTransformTool =>
 const roundTo = (value: number, decimals = 2) => Number(value.toFixed(decimals));
 
 const clampScale = (value: number) => Math.max(0.1, Math.min(5, roundTo(value, 3)));
+
+const snapScale = (value: number) => {
+  if (value >= 1) return Math.min(5, Math.round(value));
+  if (value >= 0.75) return 1;
+  if (value >= 0.35) return 0.5;
+  if (value >= 0.15) return 0.25;
+  return 0.1;
+};
 
 const wrapDegrees = (value: number) => {
   let wrapped = value % 360;
@@ -172,7 +180,7 @@ export default function App() {
   const layers = activeFrame.layers;
   const activeLayer = layers.find(layer => layer.id === activeLayerId) ?? layers[0] ?? null;
   const selectedTransformLayers = layers.filter(layer => selectedLayerIds.includes(layer.id));
-  const frameTransformTool = animationMode && isFrameTransformTool(currentTool) ? currentTool : null;
+  const frameTransformTool = isFrameTransformTool(currentTool) ? currentTool : null;
   const transformGuideSize = gridSize * pixelSize;
 
   const canvasRef = useRef<CanvasHandle>(null);
@@ -198,6 +206,7 @@ export default function App() {
   const dragCurrent = useRef<{ x: number, y: number } | null>(null);
   const lastBrushPoint = useRef<{ x: number, y: number } | null>(null);
   const transformSessionRef = useRef<TransformSession | null>(null);
+  const ldOriginalGrid = useRef<(string | null)[][] | null>(null);
 
   const updatePickerHoverColor = useCallback((nextColor: string | null) => {
     if (pickerHoverColorRef.current === nextColor) return;
@@ -300,23 +309,27 @@ export default function App() {
     if (tool === 'frame-move') {
       return {
         ...transform,
-        x: roundTo(transform.x + metrics.deltaGridX, 3),
-        y: roundTo(transform.y + metrics.deltaGridY, 3),
+        x: Math.round(transform.x + metrics.deltaGridX),
+        y: Math.round(transform.y + metrics.deltaGridY),
       };
     }
 
     if (tool === 'frame-rotate') {
       return {
         ...transform,
-        rotation: wrapDegrees(transform.rotation + metrics.deltaAngle),
+        rotation: animationMode
+          ? wrapDegrees(transform.rotation + metrics.deltaAngle)
+          : wrapDegrees(Math.round((transform.rotation + metrics.deltaAngle) / 90) * 90),
       };
     }
 
     return {
       ...transform,
-      scale: clampScale(transform.scale * metrics.scaleFactor),
+      scale: animationMode
+        ? clampScale(transform.scale * metrics.scaleFactor)
+        : snapScale(transform.scale * metrics.scaleFactor),
     };
-  }, []);
+  }, [animationMode]);
 
   const handleUndo = useCallback(() => {
     if (undoStack.length === 0) return;
@@ -391,7 +404,7 @@ export default function App() {
       const nextFrames = [...prev.frames];
       const [movedFrame] = nextFrames.splice(oldIndex, 1);
       nextFrames.splice(newIndex, 0, movedFrame);
-      
+
       let nextActiveIndex = prev.activeFrameIndex;
       if (prev.activeFrameIndex === oldIndex) {
         nextActiveIndex = newIndex;
@@ -610,6 +623,10 @@ export default function App() {
         if (key === 'c') activateTool('circle');
         if (key === 's' && !(e.ctrlKey || e.metaKey)) activateTool('select');
         if (key === 'm') activateTool('move');
+        if (key === 'd' && e.shiftKey) activateTool('darken');
+        else if (key === 'd') activateTool('lighten');
+        if (key === 'a') activateTool('spray');
+        if (key === 't') activateTool('text');
       }
 
       if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); handleUndo(); }
@@ -757,9 +774,6 @@ export default function App() {
   };
 
   const getActiveTool = () => {
-    if (!animationMode && isFrameTransformTool(currentTool)) {
-      return 'brush';
-    }
     return currentTool;
   };
 
@@ -788,7 +802,7 @@ export default function App() {
       return;
     }
     const isPickerTool = tool === 'picker';
-    const isBrushSized = ['brush', 'eraser', 'line'].includes(tool);
+    const isBrushSized = ['brush', 'eraser', 'line', 'lighten', 'darken', 'spray'].includes(tool);
     const currentBrushSize = (isBrushSized && !isPickerTool) ? brushSize : 1;
     const startOffset = -Math.floor(currentBrushSize / 2);
     hoverOverlayRef.current.style.display = 'block';
@@ -852,6 +866,221 @@ export default function App() {
   ) => {
     if (start.x === end.x && start.y === end.y) return;
     applyBrushPoints(rasterizeLine(start.x, start.y, end.x, end.y), isRightClick);
+  };
+
+  // --- Color manipulation helpers ---
+  const hexToHsl = (hex: string): [number, number, number] => {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h = 0, s = 0;
+    const l = (max + min) / 2;
+    if (max !== min) {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      else if (max === g) h = ((b - r) / d + 2) / 6;
+      else h = ((r - g) / d + 4) / 6;
+    }
+    return [h * 360, s * 100, l * 100];
+  };
+
+  const hslToHex = (h: number, s: number, l: number): string => {
+    h /= 360; s /= 100; l /= 100;
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1; if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    let r: number, g: number, b: number;
+    if (s === 0) { r = g = b = l; }
+    else {
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      r = hue2rgb(p, q, h + 1 / 3);
+      g = hue2rgb(p, q, h);
+      b = hue2rgb(p, q, h - 1 / 3);
+    }
+    const toHex = (c: number) => Math.round(Math.min(255, Math.max(0, c * 255))).toString(16).padStart(2, '0');
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+  };
+
+  // --- Lighten / Darken tool ---
+  const applyLightenDarken = (points: {x: number, y: number}[], mode: 'lighten' | 'darken') => {
+    const amount = mode === 'lighten' ? 10 : -10;
+    setAnimState(prev => {
+      const activeIdx = prev.activeFrameIndex;
+      const frame = { ...prev.frames[activeIdx] };
+      const newLayers = [...frame.layers];
+      const layerIdx = newLayers.findIndex(l => l.id === prev.activeLayerId);
+      if (layerIdx === -1 || !newLayers[layerIdx].visible) return prev;
+
+      // Snapshot original grid on first call of this stroke
+      if (!ldOriginalGrid.current) {
+        ldOriginalGrid.current = newLayers[layerIdx].grid.map(row => [...row]);
+      }
+
+      const activeLayer = { ...newLayers[layerIdx] };
+      const newGrid = activeLayer.grid.map(row => [...row]);
+      let changed = false;
+      const startOffset = -Math.floor(brushSize / 2);
+      const endOffset = Math.floor((brushSize - 1) / 2);
+
+      for (const { x, y } of points) {
+        for (let dy = startOffset; dy <= endOffset; dy++) {
+          for (let dx = startOffset; dx <= endOffset; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (!isGridCoordInBounds(nx, ny)) continue;
+
+            // Always compute from the ORIGINAL snapshot — prevents stacking naturally
+            const originalPixel = ldOriginalGrid.current[ny][nx];
+            if (!originalPixel) continue;
+            const [h, s, l] = hexToHsl(originalPixel);
+            const newL = Math.max(0, Math.min(100, l + amount));
+            const newColor = hslToHex(h, s, newL);
+            if (newGrid[ny][nx] !== newColor) {
+              newGrid[ny][nx] = newColor;
+              changed = true;
+            }
+          }
+        }
+      }
+      if (!changed) return prev;
+      activeLayer.grid = newGrid;
+      newLayers[layerIdx] = activeLayer;
+      frame.layers = newLayers;
+      const nextFrames = [...prev.frames];
+      nextFrames[activeIdx] = frame;
+      return { ...prev, frames: nextFrames };
+    });
+  };
+
+  // --- Spray paint tool ---
+  const applySpray = (x: number, y: number) => {
+    setAnimState(prev => {
+      const activeIdx = prev.activeFrameIndex;
+      const frame = { ...prev.frames[activeIdx] };
+      const newLayers = [...frame.layers];
+      const layerIdx = newLayers.findIndex(l => l.id === prev.activeLayerId);
+      if (layerIdx === -1 || !newLayers[layerIdx].visible) return prev;
+
+      const activeLayer = { ...newLayers[layerIdx] };
+      const newGrid = activeLayer.grid.map(row => [...row]);
+      let changed = false;
+      const radius = Math.max(brushSize, 3);
+      const count = Math.ceil(radius * radius * 0.2);
+
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.random() * radius;
+        const nx = x + Math.round(Math.cos(angle) * dist);
+        const ny = y + Math.round(Math.sin(angle) * dist);
+        if (!isGridCoordInBounds(nx, ny)) continue;
+        if (newGrid[ny][nx] !== currentColor) {
+          newGrid[ny][nx] = currentColor;
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      activeLayer.grid = newGrid;
+      newLayers[layerIdx] = activeLayer;
+      frame.layers = newLayers;
+      const nextFrames = [...prev.frames];
+      nextFrames[activeIdx] = frame;
+      return { ...prev, frames: nextFrames };
+    });
+  };
+
+  // --- Text tool ---
+  const applyText = (x: number, y: number) => {
+    const text = window.prompt('Enter text:');
+    if (!text) return;
+
+    pushUndoSnapshot(animState);
+    setAnimState(prev => {
+      const activeIdx = prev.activeFrameIndex;
+      const frame = { ...prev.frames[activeIdx] };
+      const newLayers = [...frame.layers];
+      const layerIdx = newLayers.findIndex(l => l.id === prev.activeLayerId);
+      if (layerIdx === -1 || !newLayers[layerIdx].visible) return prev;
+
+      const activeLayer = { ...newLayers[layerIdx] };
+      const newGrid = activeLayer.grid.map(row => [...row]);
+
+      // Simple 5x5 pixel font for basic ASCII
+      const PIXEL_FONT: Record<string, number[]> = {
+        'A': [0b01110, 0b10001, 0b11111, 0b10001, 0b10001],
+        'B': [0b11110, 0b10001, 0b11110, 0b10001, 0b11110],
+        'C': [0b01111, 0b10000, 0b10000, 0b10000, 0b01111],
+        'D': [0b11110, 0b10001, 0b10001, 0b10001, 0b11110],
+        'E': [0b11111, 0b10000, 0b11110, 0b10000, 0b11111],
+        'F': [0b11111, 0b10000, 0b11110, 0b10000, 0b10000],
+        'G': [0b01111, 0b10000, 0b10011, 0b10001, 0b01110],
+        'H': [0b10001, 0b10001, 0b11111, 0b10001, 0b10001],
+        'I': [0b11111, 0b00100, 0b00100, 0b00100, 0b11111],
+        'J': [0b00111, 0b00010, 0b00010, 0b10010, 0b01100],
+        'K': [0b10001, 0b10010, 0b11100, 0b10010, 0b10001],
+        'L': [0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+        'M': [0b10001, 0b11011, 0b10101, 0b10001, 0b10001],
+        'N': [0b10001, 0b11001, 0b10101, 0b10011, 0b10001],
+        'O': [0b01110, 0b10001, 0b10001, 0b10001, 0b01110],
+        'P': [0b11110, 0b10001, 0b11110, 0b10000, 0b10000],
+        'Q': [0b01110, 0b10001, 0b10101, 0b10010, 0b01101],
+        'R': [0b11110, 0b10001, 0b11110, 0b10010, 0b10001],
+        'S': [0b01111, 0b10000, 0b01110, 0b00001, 0b11110],
+        'T': [0b11111, 0b00100, 0b00100, 0b00100, 0b00100],
+        'U': [0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'V': [0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
+        'W': [0b10001, 0b10001, 0b10101, 0b11011, 0b10001],
+        'X': [0b10001, 0b01010, 0b00100, 0b01010, 0b10001],
+        'Y': [0b10001, 0b01010, 0b00100, 0b00100, 0b00100],
+        'Z': [0b11111, 0b00010, 0b00100, 0b01000, 0b11111],
+        '0': [0b01110, 0b10011, 0b10101, 0b11001, 0b01110],
+        '1': [0b00100, 0b01100, 0b00100, 0b00100, 0b01110],
+        '2': [0b01110, 0b10001, 0b00110, 0b01000, 0b11111],
+        '3': [0b11110, 0b00001, 0b01110, 0b00001, 0b11110],
+        '4': [0b10001, 0b10001, 0b11111, 0b00001, 0b00001],
+        '5': [0b11111, 0b10000, 0b11110, 0b00001, 0b11110],
+        '6': [0b01110, 0b10000, 0b11110, 0b10001, 0b01110],
+        '7': [0b11111, 0b00001, 0b00010, 0b00100, 0b00100],
+        '8': [0b01110, 0b10001, 0b01110, 0b10001, 0b01110],
+        '9': [0b01110, 0b10001, 0b01111, 0b00001, 0b01110],
+        ' ': [0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
+        '.': [0b00000, 0b00000, 0b00000, 0b00000, 0b00100],
+        '!': [0b00100, 0b00100, 0b00100, 0b00000, 0b00100],
+        '?': [0b01110, 0b10001, 0b00110, 0b00000, 0b00100],
+        '-': [0b00000, 0b00000, 0b11111, 0b00000, 0b00000],
+        ':': [0b00000, 0b00100, 0b00000, 0b00100, 0b00000],
+      };
+
+      let cursorX = x;
+      for (const char of text.toUpperCase()) {
+        const glyph = PIXEL_FONT[char];
+        if (!glyph) { cursorX += 4; continue; }
+        for (let row = 0; row < 5; row++) {
+          for (let col = 0; col < 5; col++) {
+            if (glyph[row] & (1 << (4 - col))) {
+              const px = cursorX + col;
+              const py = y + row;
+              if (isGridCoordInBounds(px, py)) {
+                newGrid[py][px] = currentColor;
+              }
+            }
+          }
+        }
+        cursorX += 6; // 5px wide + 1px gap
+      }
+
+      activeLayer.grid = newGrid;
+      newLayers[layerIdx] = activeLayer;
+      frame.layers = newLayers;
+      const nextFrames = [...prev.frames];
+      nextFrames[activeIdx] = frame;
+      return { ...prev, frames: nextFrames };
+    });
   };
 
   const handleFill = (startX: number, startY: number, isRightClick: boolean) => {
@@ -967,6 +1196,7 @@ export default function App() {
     lastBrushPoint.current = null;
     activePointerId.current = null;
     transformSessionRef.current = null;
+    ldOriginalGrid.current = null;
     setTransformHud(null);
   };
 
@@ -983,6 +1213,32 @@ export default function App() {
       }
       if (['line', 'rect', 'circle', 'select'].includes(tool)) {
         previewCanvasRef.current?.clear();
+      }
+    }
+
+    if (isDrawing.current && isFrameTransformTool(tool)) {
+      const shouldBake = tool === 'frame-move' || !animationMode;
+
+      if (shouldBake) {
+        setAnimState(prev => {
+          const activeIdx = prev.activeFrameIndex;
+          const frame = { ...prev.frames[activeIdx] };
+          const newLayers = [...frame.layers];
+          let changed = false;
+
+          newLayers.forEach((layer, idx) => {
+            if (layer.transform.x !== 0 || layer.transform.y !== 0 || layer.transform.rotation !== 0 || layer.transform.scale !== 1) {
+              newLayers[idx] = bakeLayerTransform(layer, gridSize);
+              changed = true;
+            }
+          });
+
+          if (!changed) return prev;
+          frame.layers = newLayers;
+          const nextFrames = [...prev.frames];
+          nextFrames[activeIdx] = frame;
+          return { ...prev, frames: nextFrames };
+        });
       }
     }
 
@@ -1068,7 +1324,7 @@ export default function App() {
     lastBrushPoint.current = { x: coords.gridX, y: coords.gridY };
     capturePointer(e);
 
-    if (['brush', 'eraser', 'line', 'rect', 'circle', 'fill'].includes(tool)) {
+    if (['brush', 'eraser', 'line', 'rect', 'circle', 'fill', 'lighten', 'darken', 'spray'].includes(tool)) {
       pushUndoSnapshot(animState);
     }
 
@@ -1077,6 +1333,13 @@ export default function App() {
     } else if (tool === 'fill') {
       isDrawing.current = false;
       handleFill(coords.gridX, coords.gridY, e.button === 2);
+    } else if (tool === 'text') {
+      isDrawing.current = false;
+      applyText(coords.gridX, coords.gridY);
+    } else if (tool === 'lighten' || tool === 'darken') {
+      applyLightenDarken([{x: coords.gridX, y: coords.gridY}], tool);
+    } else if (tool === 'spray') {
+      applySpray(coords.gridX, coords.gridY);
     } else {
       applyTool(coords.gridX, coords.gridY, e.button === 2);
     }
@@ -1153,7 +1416,20 @@ export default function App() {
         if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
         dragCurrent.current = { x: coords.gridX, y: coords.gridY };
         previewCanvasRef.current?.drawPreview(tool as PreviewTool, strokeStart.current.x, strokeStart.current.y, coords.gridX, coords.gridY, (e.buttons & 2) === 2 ? null : currentColor);
-      } else if (tool !== 'fill') {
+      } else if (tool === 'lighten' || tool === 'darken') {
+        if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
+        if (lastBrushPoint.current) {
+          const linePoints = rasterizeLine(lastBrushPoint.current.x, lastBrushPoint.current.y, coords.gridX, coords.gridY);
+          applyLightenDarken(linePoints, tool);
+        } else {
+          applyLightenDarken([{x: coords.gridX, y: coords.gridY}], tool);
+        }
+        lastBrushPoint.current = { x: coords.gridX, y: coords.gridY };
+      } else if (tool === 'spray') {
+        if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
+        applySpray(coords.gridX, coords.gridY);
+        lastBrushPoint.current = { x: coords.gridX, y: coords.gridY };
+      } else if (tool !== 'fill' && tool !== 'text') {
         if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
         if (lastBrushPoint.current?.x === coords.gridX && lastBrushPoint.current?.y === coords.gridY) return;
         if (lastBrushPoint.current) {
@@ -1400,9 +1676,6 @@ export default function App() {
     toggleAnimationMode: () => {
       const nextMode = !animationMode;
       setAnimationMode(nextMode);
-      if (!nextMode && isFrameTransformTool(currentTool)) {
-        activateTool('brush');
-      }
     },
     // @ts-ignore
     togglePlay: () => togglePlay(activeFrameIndex),
@@ -1467,17 +1740,21 @@ export default function App() {
               <button className={`tool-icon-btn ${currentTool === 'fill' ? 'active' : ''}`} onClick={() => activateTool('fill')} title="Fill (G)"><PaintBucket size={20} /></button>
               <button className={`tool-icon-btn ${currentTool === 'picker' ? 'active' : ''}`} onClick={() => activateTool('picker')} title="Eyedropper (I)"><Pipette size={20} /></button>
               <button className={`tool-icon-btn ${currentTool === 'line' ? 'active' : ''}`} onClick={() => activateTool('line')} title="Line (L)"><Minus size={20} /></button>
-              <button className={`tool-icon-btn ${currentTool === 'rect' ? 'active' : ''}`} onClick={() => activateTool('rect')} title="Rectangle (R)"><Square size={20} /></button>
-              <button className={`tool-icon-btn ${currentTool === 'circle' ? 'active' : ''}`} onClick={() => activateTool('circle')} title="Circle (C)"><Circle size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'rect' ? 'active' : ''}`} onClick={() => activateTool('rect')} title="Rectangle Outline (R)"><Square size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'circle' ? 'active' : ''}`} onClick={() => activateTool('circle')} title="Circle Outline (C)"><Circle size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'lighten' ? 'active' : ''}`} onClick={() => activateTool('lighten')} title="Lighten (D)"><Sun size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'darken' ? 'active' : ''}`} onClick={() => activateTool('darken')} title="Darken (Shift+D)"><CloudRain size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'spray' ? 'active' : ''}`} onClick={() => activateTool('spray')} title="Spray Paint (A)"><SprayCan size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'text' ? 'active' : ''}`} onClick={() => activateTool('text')} title="Text (T)"><Type size={20} /></button>
             </div>
 
             <div className="tool-separator" />
 
             {/* Frame motion tools */}
             <div className="sidebar-tools">
-              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-move' ? 'active' : ''}`} onClick={() => activateTool('frame-move')} disabled={!animationMode} title="Move Selection"><Move size={20} /></button>
-              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-rotate' ? 'active' : ''}`} onClick={() => activateTool('frame-rotate')} disabled={!animationMode} title="Rotate Selection (drag around center)"><RefreshCwIcon size={20} /></button>
-              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-scale' ? 'active' : ''}`} onClick={() => activateTool('frame-scale')} disabled={!animationMode} title="Scale Selection (drag toward or away from center)"><MaximizeIcon size={20} /></button>
+              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-move' ? 'active' : ''}`} onClick={() => activateTool('frame-move')} title="Move Selection"><Move size={20} /></button>
+              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-rotate' ? 'active' : ''}`} onClick={() => activateTool('frame-rotate')} title="Rotate Selection (drag around center)"><RefreshCwIcon size={20} /></button>
+              <button className={`tool-icon-btn frame-tool ${currentTool === 'frame-scale' ? 'active' : ''}`} onClick={() => activateTool('frame-scale')} title="Scale Selection (drag toward or away from center)"><MaximizeIcon size={20} /></button>
             </div>
 
             <div className="tool-separator" />

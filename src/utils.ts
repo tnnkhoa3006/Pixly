@@ -60,3 +60,62 @@ export const createDefaultFrame = (gridSize: number): Frame => {
     duration: 100,
   };
 };
+
+/**
+ * Bakes the layer's transform (translate, rotate, scale) into its pixel grid.
+ * Returns a new layer object with the updated grid and a reset transform.
+ */
+export const bakeLayerTransform = (layer: Layer, gridSize: number): Layer => {
+  if (
+    layer.transform.x === 0 &&
+    layer.transform.y === 0 &&
+    layer.transform.rotation === 0 &&
+    layer.transform.scale === 1
+  ) {
+    return layer;
+  }
+
+  const newGrid = createEmptyGrid(gridSize);
+  const cx = gridSize / 2;
+  const cy = gridSize / 2;
+  const cos = Math.cos((-layer.transform.rotation * Math.PI) / 180);
+  const sin = Math.sin((-layer.transform.rotation * Math.PI) / 180);
+
+  for (let ny = 0; ny < gridSize; ny++) {
+    for (let nx = 0; nx < gridSize; nx++) {
+      // 1. Inverse translate
+      let ox = nx - layer.transform.x;
+      let oy = ny - layer.transform.y;
+
+      // 2. Inverse rotate around center
+      if (layer.transform.rotation !== 0) {
+        const dx = ox - cx;
+        const dy = oy - cy;
+        ox = cx + dx * cos - dy * sin;
+        oy = cy + dx * sin + dy * cos;
+      }
+
+      // 3. Inverse scale around center
+      if (layer.transform.scale !== 1) {
+        const dx = ox - cx;
+        const dy = oy - cy;
+        ox = cx + dx / layer.transform.scale;
+        oy = cy + dy / layer.transform.scale;
+      }
+
+      // Nearest neighbor
+      const srcX = Math.floor(ox);
+      const srcY = Math.floor(oy);
+
+      if (srcX >= 0 && srcX < gridSize && srcY >= 0 && srcY < gridSize) {
+        newGrid[ny][nx] = layer.grid[srcY][srcX];
+      }
+    }
+  }
+
+  return {
+    ...layer,
+    grid: newGrid,
+    transform: createDefaultTransform(),
+  };
+};

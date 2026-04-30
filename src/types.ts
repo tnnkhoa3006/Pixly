@@ -32,6 +32,7 @@ export type AnimationState = {
 export type ToolType =
   | 'brush' | 'eraser' | 'fill' | 'picker'
   | 'line' | 'rect' | 'circle' | 'select' | 'move'
+  | 'lighten' | 'darken' | 'spray' | 'text'
   | 'frame-move' | 'frame-rotate' | 'frame-scale';
 
 export type GridSizeType = number;
