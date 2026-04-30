@@ -9,13 +9,14 @@ import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from 
 import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform, bakeLayerTransform } from './utils';
 import { saveProjectAs, saveProjectToPath, openProjectFile } from './utils/projectFile';
 import { autoSaveProject, addRecentFile } from './utils/autoSave';
-import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData } from './types';
+import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData, SelectionState } from './types';
 import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
 
 import {
   Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle,
   Move, Undo, Redo, Eye, EyeOff, Plus, Trash2, Grid3X3,
-  CheckSquare, Sun, CloudRain, Type, SprayCan
+  CheckSquare, Sun, CloudRain, Type, SprayCan,
+  Copy, Scissors, ClipboardPaste, FlipHorizontal, FlipVertical, Trash, BoxSelect, Stamp
 } from 'lucide-react';
 
 const MIN_PIXEL_SIZE = 1;
@@ -133,6 +134,46 @@ const buildTransformHud = (
   };
 };
 
+const DEFAULT_BRUSHES = [
+  { // Star
+    width: 5, height: 5,
+    pixels: [
+      [null, null, 'CURRENT', null, null],
+      [null, 'CURRENT', 'CURRENT', 'CURRENT', null],
+      ['CURRENT', 'CURRENT', 'CURRENT', 'CURRENT', 'CURRENT'],
+      [null, 'CURRENT', null, 'CURRENT', null],
+      ['CURRENT', null, null, null, 'CURRENT']
+    ]
+  },
+  { // Cross
+    width: 5, height: 5,
+    pixels: [
+      [null, null, 'CURRENT', null, null],
+      [null, null, 'CURRENT', null, null],
+      ['CURRENT', 'CURRENT', 'CURRENT', 'CURRENT', 'CURRENT'],
+      [null, null, 'CURRENT', null, null],
+      [null, null, 'CURRENT', null, null]
+    ]
+  },
+  { // Checkered
+    width: 4, height: 4,
+    pixels: [
+      ['CURRENT', null, 'CURRENT', null],
+      [null, 'CURRENT', null, 'CURRENT'],
+      ['CURRENT', null, 'CURRENT', null],
+      [null, 'CURRENT', null, 'CURRENT']
+    ]
+  },
+  { // Pencil (Diagonal)
+    width: 3, height: 3,
+    pixels: [
+      [null, null, 'CURRENT'],
+      [null, 'CURRENT', null],
+      ['CURRENT', null, null]
+    ]
+  }
+];
+
 export default function App() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [gridSize, setGridSize] = useState<GridSizeType>(16);
@@ -159,6 +200,15 @@ export default function App() {
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // --- Selection state ---
+  const [selection, setSelection] = useState<SelectionState | null>(null);
+  const [clipboard, setClipboard] = useState<{ pixels: (string | null)[][]; width: number; height: number } | null>(null);
+  const [customBrush, setCustomBrush] = useState<{ pixels: (string | null)[][]; width: number; height: number } | null>(null);
+  const [savedBrushes, setSavedBrushes] = useState<Array<{ pixels: (string | null)[][]; width: number; height: number }>>(DEFAULT_BRUSHES);
+  const [showBrushPopup, setShowBrushPopup] = useState(false);
+  const selectionDragRef = useRef<{ startGridX: number; startGridY: number; origOffsetX: number; origOffsetY: number } | null>(null);
+  const selectionResizeRef = useRef<{ handle: string; origX: number; origY: number; origW: number; origH: number; origOffX: number; origOffY: number; startGridX: number; startGridY: number; origPixels: (string | null)[][] } | null>(null);
 
   // --- SINGLE SOURCE OF TRUTH ---
   const [animState, setAnimState] = useState<AnimationState>(() => {
@@ -188,6 +238,7 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const transformContainerRef = useRef<HTMLDivElement>(null);
   const hoverOverlayRef = useRef<HTMLDivElement>(null);
+  const hoverCanvasRef = useRef<HTMLCanvasElement>(null);
   const coordsDisplayRef = useRef<HTMLSpanElement>(null);
 
   const panRef = useRef({ x: 0, y: 0 });
@@ -230,6 +281,15 @@ export default function App() {
     if (nextTool !== 'picker') {
       updatePickerHoverColor(null);
     }
+    // Commit selection when switching away from select tool
+    if (nextTool !== 'select') {
+      setSelection(prev => {
+        if (!prev) return prev;
+        // Queue commit on next render
+        setTimeout(() => commitSelection(), 0);
+        return prev;
+      });
+    }
   }, [updatePickerHoverColor]);
 
   // --- Playback Controller ---
@@ -241,6 +301,31 @@ export default function App() {
     frames,
     onFrameChange: handleFrameChange
   });
+
+  // Render custom brush to hover canvas
+  useEffect(() => {
+    if (!hoverCanvasRef.current) return;
+    const canvas = hoverCanvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    if (customBrush) {
+      canvas.width = customBrush.width;
+      canvas.height = customBrush.height;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < customBrush.height; y++) {
+        for (let x = 0; x < customBrush.width; x++) {
+          const px = customBrush.pixels[y]?.[x];
+          if (px) {
+            ctx.fillStyle = px === 'CURRENT' ? currentColor : px;
+            ctx.fillRect(x, y, 1, 1);
+          }
+        }
+      }
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }, [customBrush, currentColor]);
 
   // Render on state change
   useEffect(() => {
@@ -629,6 +714,15 @@ export default function App() {
         if (key === 't') activateTool('text');
       }
 
+      if ((e.ctrlKey || e.metaKey) && key === 'c' && selection) { e.preventDefault(); selectionCopy(); return; }
+      if ((e.ctrlKey || e.metaKey) && key === 'x' && selection) { e.preventDefault(); selectionCut(); return; }
+      if ((e.ctrlKey || e.metaKey) && key === 'v' && clipboard) { e.preventDefault(); selectionPaste(); return; }
+      if (key === 'delete' && selection) { e.preventDefault(); selectionDelete(); return; }
+      if (key === 'escape') {
+        if (selection) { commitSelection(); return; }
+        if (customBrush) { clearCustomBrush(); return; }
+      }
+
       if ((e.ctrlKey || e.metaKey) && key === 'z') { e.preventDefault(); handleUndo(); }
       if ((e.ctrlKey || e.metaKey) && key === 'y') { e.preventDefault(); handleRedo(); }
       if (key === '+' || key === '=') {
@@ -803,26 +897,47 @@ export default function App() {
     }
     const isPickerTool = tool === 'picker';
     const isBrushSized = ['brush', 'eraser', 'line', 'lighten', 'darken', 'spray'].includes(tool);
-    const currentBrushSize = (isBrushSized && !isPickerTool) ? brushSize : 1;
-    const startOffset = -Math.floor(currentBrushSize / 2);
+    
+    let w = pixelSize, h = pixelSize;
+    let ox = 0, oy = 0;
+    
+    if (customBrush && tool === 'brush') {
+      w = customBrush.width * pixelSize;
+      h = customBrush.height * pixelSize;
+      ox = -Math.floor(customBrush.width / 2);
+      oy = -Math.floor(customBrush.height / 2);
+      if (hoverCanvasRef.current) hoverCanvasRef.current.style.display = 'block';
+    } else {
+      const currentBrushSize = (isBrushSized && !isPickerTool) ? brushSize : 1;
+      w = currentBrushSize * pixelSize;
+      h = currentBrushSize * pixelSize;
+      ox = -Math.floor(currentBrushSize / 2);
+      oy = -Math.floor(currentBrushSize / 2);
+      if (hoverCanvasRef.current) hoverCanvasRef.current.style.display = 'none';
+    }
+
     hoverOverlayRef.current.style.display = 'block';
-    hoverOverlayRef.current.style.width = `${currentBrushSize * pixelSize}px`;
-    hoverOverlayRef.current.style.height = `${currentBrushSize * pixelSize}px`;
-    hoverOverlayRef.current.style.transform = `translate(${(gridX + startOffset) * pixelSize}px, ${(gridY + startOffset) * pixelSize}px)`;
+    hoverOverlayRef.current.style.width = `${w}px`;
+    hoverOverlayRef.current.style.height = `${h}px`;
+    hoverOverlayRef.current.style.transform = `translate(${(gridX + ox) * pixelSize}px, ${(gridY + oy) * pixelSize}px)`;
     hoverOverlayRef.current.style.borderRadius = isPickerTool ? '4px' : '0';
-    hoverOverlayRef.current.style.border = isPickerTool
-      ? `2px solid ${pickerHoverColorRef.current ?? 'rgba(255,255,255,0.65)'}`
-      : tool === 'eraser'
-        ? '1px solid rgba(255, 99, 99, 0.5)'
-        : '1px solid rgba(255,255,255,0.16)';
+    hoverOverlayRef.current.style.border = (customBrush && tool === 'brush')
+      ? 'none'
+      : isPickerTool
+        ? `2px solid ${pickerHoverColorRef.current ?? 'rgba(255,255,255,0.65)'}`
+        : tool === 'eraser'
+          ? '1px solid rgba(255, 99, 99, 0.5)'
+          : '1px solid rgba(255,255,255,0.16)';
     hoverOverlayRef.current.style.boxShadow = isPickerTool
       ? '0 0 0 1px rgba(0,0,0,0.35) inset'
       : 'none';
-    hoverOverlayRef.current.style.background = isPickerTool
-      ? (pickerHoverColorRef.current ? `${pickerHoverColorRef.current}33` : 'rgba(255,255,255,0.08)')
-      : tool === 'eraser'
-        ? 'rgba(255,0,0,0.15)'
-        : 'rgba(0,0,0,0.1)';
+    hoverOverlayRef.current.style.background = (customBrush && tool === 'brush')
+      ? 'transparent'
+      : isPickerTool
+        ? (pickerHoverColorRef.current ? `${pickerHoverColorRef.current}33` : 'rgba(255,255,255,0.08)')
+        : tool === 'eraser'
+          ? 'rgba(255,0,0,0.15)'
+          : 'rgba(0,0,0,0.1)';
   };
 
   const applyBrushPoints = (points: Point[], isRightClick: boolean) => {
@@ -841,8 +956,32 @@ export default function App() {
       const clonedRows = new Set<number>();
       let changed = false;
 
-      for (const point of points) {
-        changed = stampBrushPoint(newGrid, point.x, point.y, targetColor, brushSize, clonedRows) || changed;
+      if (customBrush && tool === 'brush' && !isRightClick) {
+        // Stamp custom brush pattern at each point
+        const bw = customBrush.width;
+        const bh = customBrush.height;
+        const ox = -Math.floor(bw / 2);
+        const oy = -Math.floor(bh / 2);
+        for (const point of points) {
+          for (let by = 0; by < bh; by++) {
+            for (let bx = 0; bx < bw; bx++) {
+              const px = customBrush.pixels[by]?.[bx];
+              const finalColor = px === 'CURRENT' ? targetColor : px;
+              if (finalColor === null) continue;
+              const gx = point.x + ox + bx;
+              const gy = point.y + oy + by;
+              if (!isGridCoordInBounds(gx, gy)) continue;
+              if (newGrid[gy][gx] === finalColor) continue;
+              if (!clonedRows.has(gy)) { newGrid[gy] = [...newGrid[gy]]; clonedRows.add(gy); }
+              newGrid[gy][gx] = finalColor;
+              changed = true;
+            }
+          }
+        }
+      } else {
+        for (const point of points) {
+          changed = stampBrushPoint(newGrid, point.x, point.y, targetColor, brushSize, clonedRows) || changed;
+        }
       }
 
       if (!changed) return prev;
@@ -1083,6 +1222,152 @@ export default function App() {
     });
   };
 
+  // --- Selection helpers ---
+  const resizePixels = (pixels: (string | null)[][], oldW: number, oldH: number, newW: number, newH: number): (string | null)[][] => {
+    if (newW <= 0 || newH <= 0) return [];
+    const result: (string | null)[][] = Array.from({ length: newH }, () => Array(newW).fill(null));
+    for (let y = 0; y < newH; y++) {
+      const srcY = Math.min(Math.floor(y * oldH / newH), oldH - 1);
+      for (let x = 0; x < newW; x++) {
+        const srcX = Math.min(Math.floor(x * oldW / newW), oldW - 1);
+        result[y][x] = pixels[srcY]?.[srcX] ?? null;
+      }
+    }
+    return result;
+  };
+
+  const confirmSelection = (x0: number, y0: number, x1: number, y1: number) => {
+    const minX = Math.max(0, Math.min(x0, x1));
+    const maxX = Math.min(gridSize - 1, Math.max(x0, x1));
+    const minY = Math.max(0, Math.min(y0, y1));
+    const maxY = Math.min(gridSize - 1, Math.max(y0, y1));
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+    if (w <= 0 || h <= 0) return;
+
+    pushUndoSnapshot(animState);
+
+    const layer = activeLayer;
+    if (!layer) return;
+
+    const extractedPixels: (string | null)[][] = [];
+    for (let y = 0; y < h; y++) {
+      const row: (string | null)[] = [];
+      for (let x = 0; x < w; x++) {
+        row.push(layer.grid[minY + y]?.[minX + x] ?? null);
+      }
+      extractedPixels.push(row);
+    }
+
+    setAnimState(prev => {
+      const activeIdx = prev.activeFrameIndex;
+      const frame = { ...prev.frames[activeIdx] };
+      const newLayers = [...frame.layers];
+      const layerIdx = newLayers.findIndex(l => l.id === prev.activeLayerId);
+      if (layerIdx === -1) return prev;
+      const al = { ...newLayers[layerIdx] };
+      const newGrid = al.grid.map(row => [...row]);
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          newGrid[y][x] = null;
+        }
+      }
+      al.grid = newGrid;
+      newLayers[layerIdx] = al;
+      frame.layers = newLayers;
+      const nextFrames = [...prev.frames];
+      nextFrames[activeIdx] = frame;
+      return { ...prev, frames: nextFrames };
+    });
+
+    setSelection({ x: minX, y: minY, width: w, height: h, pixels: extractedPixels, offsetX: 0, offsetY: 0 });
+  };
+
+  const commitSelection = () => {
+    if (!selection) return;
+    const { x, y, width, height, pixels, offsetX, offsetY } = selection;
+    const placeX = x + offsetX;
+    const placeY = y + offsetY;
+
+    setAnimState(prev => {
+      const activeIdx = prev.activeFrameIndex;
+      const frame = { ...prev.frames[activeIdx] };
+      const newLayers = [...frame.layers];
+      const layerIdx = newLayers.findIndex(l => l.id === prev.activeLayerId);
+      if (layerIdx === -1) return prev;
+      const al = { ...newLayers[layerIdx] };
+      const newGrid = al.grid.map(row => [...row]);
+      for (let row = 0; row < height; row++) {
+        for (let col = 0; col < width; col++) {
+          const gx = placeX + col;
+          const gy = placeY + row;
+          if (gx < 0 || gx >= gridSize || gy < 0 || gy >= gridSize) continue;
+          const pixel = pixels[row]?.[col];
+          if (pixel !== null) newGrid[gy][gx] = pixel;
+        }
+      }
+      al.grid = newGrid;
+      newLayers[layerIdx] = al;
+      frame.layers = newLayers;
+      const nextFrames = [...prev.frames];
+      nextFrames[activeIdx] = frame;
+      return { ...prev, frames: nextFrames };
+    });
+
+    setSelection(null);
+    selectionDragRef.current = null;
+    selectionResizeRef.current = null;
+  };
+
+  const selectionCopy = () => {
+    if (!selection) return;
+    setClipboard({ pixels: selection.pixels.map(r => [...r]), width: selection.width, height: selection.height });
+  };
+
+  const selectionCut = () => {
+    if (!selection) return;
+    selectionCopy();
+    setSelection(null);
+    selectionDragRef.current = null;
+    selectionResizeRef.current = null;
+  };
+
+  const selectionPaste = () => {
+    if (!clipboard) return;
+    if (selection) commitSelection();
+    pushUndoSnapshot(animState);
+    setSelection({ x: 0, y: 0, width: clipboard.width, height: clipboard.height, pixels: clipboard.pixels.map(r => [...r]), offsetX: 0, offsetY: 0 });
+    if (currentTool !== 'select') activateTool('select');
+  };
+
+  const selectionDelete = () => {
+    if (!selection) return;
+    setSelection(null);
+    selectionDragRef.current = null;
+    selectionResizeRef.current = null;
+  };
+
+  const selectionFlipH = () => {
+    if (!selection) return;
+    setSelection(prev => prev ? { ...prev, pixels: prev.pixels.map(row => [...row].reverse()) } : prev);
+  };
+
+  const selectionFlipV = () => {
+    if (!selection) return;
+    setSelection(prev => prev ? { ...prev, pixels: [...prev.pixels].reverse() } : prev);
+  };
+
+  const selectionNewBrush = () => {
+    if (!selection) return;
+    const newBrush = { pixels: selection.pixels.map(r => [...r]), width: selection.width, height: selection.height };
+    setSavedBrushes(prev => [...prev, newBrush]);
+    setCustomBrush(newBrush);
+    commitSelection();
+    activateTool('brush');
+  };
+
+  const clearCustomBrush = () => setCustomBrush(null);
+
   const handleFill = (startX: number, startY: number, isRightClick: boolean) => {
     setAnimState(prev => {
       const activeIdx = prev.activeFrameIndex;
@@ -1211,10 +1496,17 @@ export default function App() {
       if (['line', 'rect', 'circle'].includes(tool) && strokeStart.current && dragCurrent.current) {
         commitGeometry(tool, strokeStart.current.x, strokeStart.current.y, dragCurrent.current.x, dragCurrent.current.y, button === 2);
       }
+      if (tool === 'select' && strokeStart.current && dragCurrent.current && !selection) {
+        // Confirm new selection
+        confirmSelection(strokeStart.current.x, strokeStart.current.y, dragCurrent.current.x, dragCurrent.current.y);
+      }
       if (['line', 'rect', 'circle', 'select'].includes(tool)) {
         previewCanvasRef.current?.clear();
       }
     }
+    // End selection drag/resize
+    selectionDragRef.current = null;
+    selectionResizeRef.current = null;
 
     if (isDrawing.current && isFrameTransformTool(tool)) {
       const shouldBake = tool === 'frame-move' || !animationMode;
@@ -1304,6 +1596,73 @@ export default function App() {
     const coords = getPointerCoords(e);
     if (!coords) return;
 
+    // --- Selection interaction ---
+    if (selection && tool === 'select') {
+      const selScreenX = (selection.x + selection.offsetX) * pixelSize;
+      const selScreenY = (selection.y + selection.offsetY) * pixelSize;
+      const selScreenW = selection.width * pixelSize;
+      const selScreenH = selection.height * pixelSize;
+      const localX = coords.mouseX - panRef.current.x;
+      const localY = coords.mouseY - panRef.current.y;
+      const handleSize = 8;
+
+      // Check resize handles (8 handles)
+      const handles = [
+        { name: 'nw', hx: selScreenX, hy: selScreenY },
+        { name: 'n', hx: selScreenX + selScreenW / 2, hy: selScreenY },
+        { name: 'ne', hx: selScreenX + selScreenW, hy: selScreenY },
+        { name: 'w', hx: selScreenX, hy: selScreenY + selScreenH / 2 },
+        { name: 'e', hx: selScreenX + selScreenW, hy: selScreenY + selScreenH / 2 },
+        { name: 'sw', hx: selScreenX, hy: selScreenY + selScreenH },
+        { name: 's', hx: selScreenX + selScreenW / 2, hy: selScreenY + selScreenH },
+        { name: 'se', hx: selScreenX + selScreenW, hy: selScreenY + selScreenH },
+      ];
+
+      let hitHandle: string | null = null;
+      for (const h of handles) {
+        if (Math.abs(localX - h.hx) <= handleSize && Math.abs(localY - h.hy) <= handleSize) {
+          hitHandle = h.name;
+          break;
+        }
+      }
+
+      if (hitHandle) {
+        selectionResizeRef.current = {
+          handle: hitHandle,
+          origX: selection.x + selection.offsetX,
+          origY: selection.y + selection.offsetY,
+          origW: selection.width,
+          origH: selection.height,
+          origOffX: selection.offsetX,
+          origOffY: selection.offsetY,
+          startGridX: coords.gridX,
+          startGridY: coords.gridY,
+          origPixels: selection.pixels.map(r => [...r]),
+        };
+        isDrawing.current = true;
+        capturePointer(e);
+        return;
+      }
+
+      // Check if inside selection → start drag
+      const sx = selection.x + selection.offsetX;
+      const sy = selection.y + selection.offsetY;
+      if (coords.gridX >= sx && coords.gridX < sx + selection.width && coords.gridY >= sy && coords.gridY < sy + selection.height) {
+        selectionDragRef.current = {
+          startGridX: coords.gridX,
+          startGridY: coords.gridY,
+          origOffsetX: selection.offsetX,
+          origOffsetY: selection.offsetY,
+        };
+        isDrawing.current = true;
+        capturePointer(e);
+        return;
+      }
+
+      // Click outside selection → commit it
+      commitSelection();
+    }
+
     if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
 
     if (tool === 'picker') {
@@ -1371,6 +1730,40 @@ export default function App() {
     updateHover(coords.gridX, coords.gridY, true);
 
     if (!isDrawing.current) return;
+
+    // --- Selection drag ---
+    if (selectionDragRef.current && selection) {
+      const dx = coords.gridX - selectionDragRef.current.startGridX;
+      const dy = coords.gridY - selectionDragRef.current.startGridY;
+      setSelection(prev => prev ? {
+        ...prev,
+        offsetX: selectionDragRef.current!.origOffsetX + dx,
+        offsetY: selectionDragRef.current!.origOffsetY + dy,
+      } : prev);
+      return;
+    }
+
+    // --- Selection resize ---
+    if (selectionResizeRef.current && selection) {
+      const r = selectionResizeRef.current;
+      const dx = coords.gridX - r.startGridX;
+      const dy = coords.gridY - r.startGridY;
+
+      let newX = r.origX, newY = r.origY, newW = r.origW, newH = r.origH;
+
+      if (r.handle.includes('e')) newW = Math.max(1, r.origW + dx);
+      if (r.handle.includes('s')) newH = Math.max(1, r.origH + dy);
+      if (r.handle.includes('w')) { newW = Math.max(1, r.origW - dx); newX = r.origX + (r.origW - newW); }
+      if (r.handle.includes('n')) { newH = Math.max(1, r.origH - dy); newY = r.origY + (r.origH - newH); }
+
+      const resized = resizePixels(r.origPixels, r.origW, r.origH, newW, newH);
+      setSelection({
+        x: newX, y: newY, width: newW, height: newH,
+        pixels: resized,
+        offsetX: newX - (selection.x), offsetY: newY - (selection.y),
+      });
+      return;
+    }
 
     if (isFrameTransformTool(tool)) {
       const session = transformSessionRef.current;
@@ -1735,7 +2128,14 @@ export default function App() {
             />
 
             <div className="sidebar-tools">
-              <button className={`tool-icon-btn ${currentTool === 'brush' ? 'active' : ''}`} onClick={() => activateTool('brush')} title="Brush (B)"><Brush size={20} /></button>
+              <button
+                className={`tool-icon-btn ${currentTool === 'brush' ? 'active' : ''} ${customBrush ? 'has-custom-brush' : ''}`}
+                onClick={() => activateTool('brush')}
+                onContextMenu={(e) => { e.preventDefault(); setShowBrushPopup(true); }}
+                title="Brush (B) - Right click for custom brushes"
+              >
+                <Brush size={20} />
+              </button>
               <button className={`tool-icon-btn ${currentTool === 'eraser' ? 'active' : ''}`} onClick={() => activateTool('eraser')} title="Eraser (E)"><Eraser size={20} /></button>
               <button className={`tool-icon-btn ${currentTool === 'fill' ? 'active' : ''}`} onClick={() => activateTool('fill')} title="Fill (G)"><PaintBucket size={20} /></button>
               <button className={`tool-icon-btn ${currentTool === 'picker' ? 'active' : ''}`} onClick={() => activateTool('picker')} title="Eyedropper (I)"><Pipette size={20} /></button>
@@ -1746,6 +2146,7 @@ export default function App() {
               <button className={`tool-icon-btn ${currentTool === 'darken' ? 'active' : ''}`} onClick={() => activateTool('darken')} title="Darken (Shift+D)"><CloudRain size={20} /></button>
               <button className={`tool-icon-btn ${currentTool === 'spray' ? 'active' : ''}`} onClick={() => activateTool('spray')} title="Spray Paint (A)"><SprayCan size={20} /></button>
               <button className={`tool-icon-btn ${currentTool === 'text' ? 'active' : ''}`} onClick={() => activateTool('text')} title="Text (T)"><Type size={20} /></button>
+              <button className={`tool-icon-btn ${currentTool === 'select' ? 'active' : ''}`} onClick={() => activateTool('select')} title="Select (S)"><BoxSelect size={20} /></button>
             </div>
 
             <div className="tool-separator" />
@@ -1758,6 +2159,8 @@ export default function App() {
             </div>
 
             <div className="tool-separator" />
+
+
 
             <div className="brush-size-container" style={{ width: '100%', padding: '0 12px', display: 'flex', flexDirection: 'column', gap: '6px', boxSizing: 'border-box' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#aaa', userSelect: 'none' }}>
@@ -1841,7 +2244,65 @@ export default function App() {
                 pointerEvents: 'none'
               }}>
                 <PreviewCanvas ref={previewCanvasRef} gridSize={gridSize} pixelSize={pixelSize} brushSize={brushSize} />
-                <div ref={hoverOverlayRef} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', display: 'none', boxSizing: 'border-box' }} />
+                <div ref={hoverOverlayRef} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', display: 'none', boxSizing: 'border-box' }}>
+                  <canvas ref={hoverCanvasRef} style={{ width: '100%', height: '100%', imageRendering: 'pixelated', opacity: 0.6, display: 'none' }} />
+                </div>
+                {/* Selection overlay */}
+                {selection && currentTool === 'select' && (() => {
+                  const sx = (selection.x + selection.offsetX) * pixelSize;
+                  const sy = (selection.y + selection.offsetY) * pixelSize;
+                  const sw = selection.width * pixelSize;
+                  const sh = selection.height * pixelSize;
+                  const handlePositions = [
+                    { name: 'nw', left: -4, top: -4 },
+                    { name: 'n', left: sw / 2 - 4, top: -4 },
+                    { name: 'ne', left: sw - 4, top: -4 },
+                    { name: 'w', left: -4, top: sh / 2 - 4 },
+                    { name: 'e', left: sw - 4, top: sh / 2 - 4 },
+                    { name: 'sw', left: -4, top: sh - 4 },
+                    { name: 's', left: sw / 2 - 4, top: sh - 4 },
+                    { name: 'se', left: sw - 4, top: sh - 4 },
+                  ];
+                  const handleCursors: Record<string, string> = { nw: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', se: 'nwse-resize', n: 'ns-resize', s: 'ns-resize', w: 'ew-resize', e: 'ew-resize' };
+                  return (
+                    <div className="selection-overlay" style={{ position: 'absolute', left: sx, top: sy, width: sw, height: sh, pointerEvents: 'none', zIndex: 50 }}>
+                      {/* Render selection pixels */}
+                      <canvas
+                        ref={(canvas) => {
+                          if (!canvas) return;
+                          const ctx = canvas.getContext('2d');
+                          if (!ctx) return;
+                          canvas.width = selection.width;
+                          canvas.height = selection.height;
+                          ctx.clearRect(0, 0, selection.width, selection.height);
+                          for (let row = 0; row < selection.height; row++) {
+                            for (let col = 0; col < selection.width; col++) {
+                              const px = selection.pixels[row]?.[col];
+                              if (px) { ctx.fillStyle = px; ctx.fillRect(col, row, 1, 1); }
+                            }
+                          }
+                        }}
+                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', imageRendering: 'pixelated', pointerEvents: 'none' }}
+                      />
+                      {/* Marching ants border */}
+                      <div className="selection-border" />
+                      {/* Resize handles */}
+                      {handlePositions.map(h => (
+                        <div key={h.name} className="selection-handle" style={{ left: h.left, top: h.top, cursor: handleCursors[h.name], pointerEvents: 'auto' }} />
+                      ))}
+                      {/* Floating toolbar */}
+                      <div className="selection-toolbar" style={{ pointerEvents: 'auto' }} onPointerDown={(e) => e.stopPropagation()}>
+                        <button onClick={selectionCopy} title="Copy (Ctrl+C)"><Copy size={14} /></button>
+                        <button onClick={selectionPaste} title="Paste (Ctrl+V)"><ClipboardPaste size={14} /></button>
+                        <button onClick={selectionCut} title="Cut (Ctrl+X)"><Scissors size={14} /></button>
+                        <button onClick={selectionNewBrush} title="New Brush"><Stamp size={14} /></button>
+                        <button onClick={selectionFlipH} title="Flip Horizontal"><FlipHorizontal size={14} /></button>
+                        <button onClick={selectionFlipV} title="Flip Vertical"><FlipVertical size={14} /></button>
+                        <button onClick={selectionDelete} title="Delete (Del)"><Trash size={14} /></button>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
               {showTransformGuides && (
                 <div
@@ -1986,6 +2447,56 @@ export default function App() {
           <span>Zoom: {Math.round((pixelSize / 32) * 100)}%</span>
         </div>
       </div>
+      {/* Brush Selection Popup */}
+      {showBrushPopup && (
+        <div className="brush-popup-overlay" onPointerDown={() => setShowBrushPopup(false)}>
+          <div className="brush-popup-content" onPointerDown={(e) => e.stopPropagation()}>
+            <div className="brush-popup-header">
+              <h3>Brushes</h3>
+              <p>To assign a custom brush - simply use the select tool and select the desired area. Use hashtag #brushes to get your brush added.</p>
+            </div>
+            <div className="brush-popup-body">
+              <h4>Brushes:</h4>
+              <div className="brush-grid">
+                <div className={`brush-item ${customBrush === null ? 'active' : ''}`} onClick={() => { setCustomBrush(null); setShowBrushPopup(false); activateTool('brush'); }} title="Default Brush (1px)">
+                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
+                    <Brush size={32} />
+                  </div>
+                </div>
+                {savedBrushes.map((brush, idx) => (
+                  <div key={idx} className="brush-item" onClick={() => { setCustomBrush(brush); setShowBrushPopup(false); activateTool('brush'); }}>
+                    <canvas
+                      width={brush.width}
+                      height={brush.height}
+                      ref={(canvas) => {
+                        if (!canvas) return;
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) return;
+                        ctx.clearRect(0, 0, brush.width, brush.height);
+                        for (let y = 0; y < brush.height; y++) {
+                          for (let x = 0; x < brush.width; x++) {
+                            const px = brush.pixels[y]?.[x];
+                            if (px) {
+                              ctx.fillStyle = px === 'CURRENT' ? currentColor : px;
+                              ctx.fillRect(x, y, 1, 1);
+                            }
+                          }
+                        }
+                      }}
+                      style={{ imageRendering: 'pixelated', width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
+                    />
+                    <button className="brush-item-delete" onClick={(e) => { e.stopPropagation(); setSavedBrushes(prev => prev.filter((_, i) => i !== idx)); if (customBrush === brush) setCustomBrush(null); }} title="Delete Brush"><Trash size={14} /></button>
+                  </div>
+                ))}
+                {savedBrushes.length === 0 && (
+                  <div style={{ gridColumn: '1 / -1', color: '#666', fontSize: '12px', padding: '10px 0' }}>No brushes saved yet. Create a selection and click the "New Brush" button!</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -35,6 +35,23 @@ export type ToolType =
   | 'lighten' | 'darken' | 'spray' | 'text'
   | 'frame-move' | 'frame-rotate' | 'frame-scale';
 
+export type SelectionState = {
+  /** Top-left grid X of the selection region */
+  x: number;
+  /** Top-left grid Y of the selection region */
+  y: number;
+  /** Width in grid cells */
+  width: number;
+  /** Height in grid cells */
+  height: number;
+  /** Extracted pixel data (row-major, null = transparent) */
+  pixels: (string | null)[][];
+  /** Current drag offset X (grid cells) */
+  offsetX: number;
+  /** Current drag offset Y (grid cells) */
+  offsetY: number;
+};
+
 export type GridSizeType = number;
 
 /** Serialized project file (.pixly) */
