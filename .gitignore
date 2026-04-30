@@ -27,6 +27,9 @@ lerna-debug.log*
 src-tauri/target/
 src-tauri/gen/
 src-tauri/bin/
+*.key
+*.key.pub
+"~/"
 
 # Environment variables
 .env

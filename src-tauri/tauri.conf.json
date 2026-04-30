@@ -32,5 +32,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2RTZFM0RBODUxNDI2NjMKUldSakpoU0YydVBtOXJ1bVZVRlExTm9LTEpCN29SQUdvTzF6ZlhlYkVIOElBU1Njd2RVenFoVnoK",
+      "endpoints": [
+        "https://github.com/tnnkhoa3006/Pixly/releases/latest/download/latest.json"
+      ],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

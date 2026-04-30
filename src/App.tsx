@@ -11,6 +11,8 @@ import { saveProjectAs, saveProjectToPath, openProjectFile } from './utils/proje
 import { autoSaveProject, addRecentFile } from './utils/autoSave';
 import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData, SelectionState } from './types';
 import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
+import { check, type Update } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 
 import {
   Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle,
@@ -187,6 +189,27 @@ export default function App() {
   const [redoStack, setRedoStack] = useState<AnimationState[]>([]);
   const canUndo = undoStack.length > 0;
   const canRedo = redoStack.length > 0;
+
+  // --- Updater State ---
+  const [updateAvailable, setUpdateAvailable] = useState<Update | null>(null);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  useEffect(() => {
+    // Automatically check for updates on launch (only in Tauri environment)
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    
+    const checkForUpdates = async () => {
+      try {
+        const update = await check();
+        if (update) {
+          setUpdateAvailable(update);
+        }
+      } catch (e) {
+        console.error('Failed to check for updates on launch:', e);
+      }
+    };
+    checkForUpdates();
+  }, []);
 
   // --- UI State ---
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(64);
@@ -2032,6 +2055,8 @@ export default function App() {
     {
       label: 'Help',
       items: [
+        { label: 'Check for Updates...', action: 'checkUpdates' },
+        { type: 'separator' },
         { label: 'About', action: 'about' }
       ]
     }
@@ -2075,7 +2100,24 @@ export default function App() {
     addFrame: handleAddFrame,
     duplicateFrame: handleDuplicateFrame,
     deleteFrame: handleDeleteFrame,
-    about: () => window.alert('Pixly - Professional Pixel Art Editor\nv0.1.0 · Built with React & Tauri')
+    about: () => window.alert('Pixly - Professional Pixel Art Editor\nv0.1.0 · Built with React & Tauri'),
+    checkUpdates: async () => {
+      if (!('__TAURI_INTERNALS__' in window)) {
+        window.alert('Updates are only supported in the desktop app.');
+        return;
+      }
+      try {
+        const update = await check();
+        if (update) {
+          setUpdateAvailable(update);
+        } else {
+          window.alert('You are on the latest version!');
+        }
+      } catch (e) {
+        console.error('Failed to check for updates:', e);
+        window.alert('Failed to check for updates. Check your connection or try again later.');
+      }
+    }
   };
 
   // --- Welcome Screen ---
@@ -2493,6 +2535,42 @@ export default function App() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Update Notification Toast */}
+      {updateAvailable && (
+        <div className="update-toast">
+          <div className="update-toast-content">
+            <h4>Update Available!</h4>
+            <p>Pixly v{updateAvailable.version} is ready to install.</p>
+          </div>
+          <div className="update-toast-actions">
+            <button 
+              className="update-btn-primary" 
+              disabled={isUpdating}
+              onClick={async () => {
+                setIsUpdating(true);
+                try {
+                  await updateAvailable.downloadAndInstall();
+                  await relaunch();
+                } catch (e) {
+                  console.error('Update failed:', e);
+                  window.alert('Failed to install update.');
+                  setIsUpdating(false);
+                }
+              }}
+            >
+              {isUpdating ? 'Installing...' : 'Update & Relaunch'}
+            </button>
+            <button 
+              className="update-btn-secondary" 
+              onClick={() => setUpdateAvailable(null)}
+              disabled={isUpdating}
+            >
+              Later
+            </button>
           </div>
         </div>
       )}
