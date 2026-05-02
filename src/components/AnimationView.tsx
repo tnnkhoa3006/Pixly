@@ -185,7 +185,7 @@ export default function AnimationView({
   const rulerMarks = Math.max(1, Math.ceil(totalDuration / 100));
 
   // Cumulative time per frame for ruler indicator
-  const frameTimes = frames.reduce<number[]>((acc, f, i) => {
+  const frameTimes = frames.reduce<number[]>((acc, _, i) => {
     acc.push(i === 0 ? 0 : acc[i - 1] + frames[i - 1].duration);
     return acc;
   }, []);
