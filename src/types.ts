@@ -63,3 +63,21 @@ export type ProjectData = {
   currentTool: ToolType;
   savedAt: string; // ISO timestamp
 };
+
+/** Per-tab project state */
+export type TabState = {
+  id: string;
+  /** Display name (file name or "Untitled") */
+  name: string;
+  filePath: string | null;
+  isDirty: boolean;
+  gridSize: GridSizeType;
+  animState: AnimationState;
+  currentColor: string;
+  currentTool: ToolType;
+  undoStack: AnimationState[];
+  redoStack: AnimationState[];
+  /** Pan position saved when switching away */
+  pan: { x: number; y: number };
+  pixelSize: number;
+};

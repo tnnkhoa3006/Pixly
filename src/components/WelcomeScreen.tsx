@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { FolderOpen, Plus, MoreHorizontal } from 'lucide-react';
 import type { GridSizeType, ProjectData } from '../types';
 import { hasAutoSave, loadAutoSave, getRecentFiles, type RecentFile } from '../utils/autoSave';
 import { openProjectFile } from '../utils/projectFile';
@@ -9,7 +10,12 @@ interface WelcomeScreenProps {
   onContinue: (data: ProjectData) => void;
 }
 
-const SIZE_PRESETS = [16, 32, 64, 128];
+const SIZE_PRESETS: { size: number; label: string }[] = [
+  { size: 16,  label: 'Icon'   },
+  { size: 32,  label: 'Small'  },
+  { size: 64,  label: 'Tile'   },
+  { size: 128, label: 'Sprite' },
+];
 const MAX_SIZE = 512;
 
 export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue }: WelcomeScreenProps) {
@@ -19,6 +25,7 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
   const [customSize, setCustomSize] = useState('');
   const [customError, setCustomError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [selectedPreset, setSelectedPreset] = useState<number | null>(32);
 
   useEffect(() => {
     (async () => {
@@ -65,6 +72,11 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
     onNewProject(val);
   };
 
+  const handleNewProject = () => {
+    const size = selectedPreset ?? 32;
+    onNewProject(size);
+  };
+
   if (loading) {
     return (
       <div className="welcome-screen">
@@ -75,97 +87,157 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
 
   return (
     <div className="welcome-screen">
-      <div className="welcome-card">
-        {/* Header */}
-        <div className="welcome-header">
-          <div className="welcome-logo">Pixly</div>
-          <div className="welcome-tagline">Professional Pixel Art Editor</div>
-        </div>
+      <div className="welcome-layout">
 
-        {/* Continue */}
-        {hasAuto && (
-          <div className="welcome-section">
-            <button className="welcome-btn welcome-btn-primary" onClick={handleContinue}>
-              <span className="welcome-btn-icon">▶</span>
-              <div className="welcome-btn-text">
-                <span className="welcome-btn-title">Continue Last Project</span>
-                {autoSaveDate && <span className="welcome-btn-sub">{autoSaveDate}</span>}
-              </div>
-            </button>
+        {/* ── Left hero panel ── */}
+        <div className="welcome-hero">
+          {/* Sparkle decorations */}
+          <div className="welcome-sparkles" aria-hidden="true">
+            <span className="welcome-sparkle">✦</span>
+            <span className="welcome-sparkle">✧</span>
+            <span className="welcome-sparkle">✦</span>
+            <span className="welcome-sparkle">✧</span>
+            <span className="welcome-sparkle">✦</span>
           </div>
-        )}
 
-        {/* New Project */}
-        <div className="welcome-section">
-          <div className="welcome-section-title">New Project</div>
-          <div className="welcome-presets">
-            {SIZE_PRESETS.map(size => (
-              <button key={size} className="welcome-preset" onClick={() => onNewProject(size)}>
-                <span className="welcome-preset-size">{size}×{size}</span>
-              </button>
-            ))}
-          </div>
-          <div className="welcome-custom-row">
-            <input
-              type="number"
-              className="welcome-custom-input"
-              placeholder="Custom size…"
-              min={1}
-              max={MAX_SIZE}
-              value={customSize}
-              onChange={(e) => { setCustomSize(e.target.value); setCustomError(''); }}
-              onKeyDown={(e) => e.key === 'Enter' && handleCustomCreate()}
-            />
-            <button className="welcome-btn welcome-btn-small" onClick={handleCustomCreate}>Create</button>
-          </div>
-          {customError && <div className="welcome-error">{customError}</div>}
-        </div>
-
-        {/* Open File */}
-        <div className="welcome-section">
-          <button className="welcome-btn welcome-btn-secondary" onClick={handleOpen}>
-            <span className="welcome-btn-icon">📂</span>
-            <span className="welcome-btn-title">Open File (.pixly)</span>
-          </button>
-        </div>
-
-        {/* Recent Files */}
-        {recentFiles.length > 0 && (
-          <div className="welcome-section">
-            <div className="welcome-section-title">Recent Files</div>
-            <div className="welcome-recent-list">
-              {recentFiles.map((file, i) => (
-                <button
-                  key={i}
-                  className="welcome-recent-item"
-                  onClick={() => {
-                    // In Tauri, re-open from file path
-                    (async () => {
-                      try {
-                        const { readTextFile } = await import('@tauri-apps/plugin-fs');
-                        const { deserializeProject } = await import('../utils/projectFile');
-                        const content = await readTextFile(file.filePath);
-                        const data = deserializeProject(content);
-                        onLoadProject(data, file.filePath);
-                      } catch {
-                        alert(`Could not open: ${file.name}`);
-                      }
-                    })();
-                  }}
-                >
-                  <div className="welcome-recent-name">{file.name}</div>
-                  <div className="welcome-recent-meta">
-                    {file.canvasSize} · {new Date(file.timestamp).toLocaleDateString()}
-                  </div>
-                </button>
-              ))}
+          <div className="welcome-hero-content">
+            <div className="welcome-hero-label">Welcome to</div>
+            <div className="welcome-logo">Pixly</div>
+            <div className="welcome-version">v0.1.0</div>
+            <div className="welcome-tagline">
+              Design, animate, and bring pixels to life.
             </div>
           </div>
-        )}
-
-        <div className="welcome-footer">
-          v0.1.0 · Built with ❤ and Tauri
         </div>
+
+        {/* ── Right content panel ── */}
+        <div className="welcome-card">
+          <div className="welcome-card-inner">
+
+            {/* Continue last project */}
+            {hasAuto && (
+              <div className="welcome-actions">
+                <button className="welcome-btn welcome-btn-primary" onClick={handleContinue}>
+                  <span className="welcome-btn-icon">▶</span>
+                  <div className="welcome-btn-text">
+                    <span className="welcome-btn-title">Continue Last Project</span>
+                    {autoSaveDate && <span className="welcome-btn-sub">{autoSaveDate}</span>}
+                  </div>
+                </button>
+              </div>
+            )}
+
+            {/* New Project */}
+            <div className="welcome-section">
+              <div className="welcome-section-header">
+                <div className="welcome-section-title">Canvas Presets</div>
+                <span className="welcome-section-action" style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                  Custom Size
+                </span>
+              </div>
+
+              <div className="welcome-presets">
+                {SIZE_PRESETS.map(({ size, label }) => (
+                  <button
+                    key={size}
+                    className={`welcome-preset ${selectedPreset === size ? 'active' : ''}`}
+                    onClick={() => setSelectedPreset(size)}
+                  >
+                    <span className="welcome-preset-size">{size}×{size}</span>
+                    <span className="welcome-preset-label">{label}</span>
+                  </button>
+                ))}
+                {/* Custom size preset slot */}
+                <button
+                  className={`welcome-preset ${selectedPreset === null ? 'active' : ''}`}
+                  onClick={() => setSelectedPreset(null)}
+                  title="Custom size"
+                >
+                  <span className="welcome-preset-size" style={{ fontSize: '18px' }}>+</span>
+                  <span className="welcome-preset-label">Custom</span>
+                </button>
+              </div>
+
+              {/* Custom size input — shown when Custom is selected */}
+              {selectedPreset === null && (
+                <div className="welcome-custom-row">
+                  <input
+                    type="number"
+                    className="welcome-custom-input"
+                    placeholder="e.g. 256"
+                    min={1}
+                    max={MAX_SIZE}
+                    value={customSize}
+                    onChange={(e) => { setCustomSize(e.target.value); setCustomError(''); }}
+                    onKeyDown={(e) => e.key === 'Enter' && handleCustomCreate()}
+                    autoFocus
+                  />
+                  <button className="welcome-btn-small" onClick={handleCustomCreate}>Create</button>
+                </div>
+              )}
+              {customError && <div className="welcome-error">{customError}</div>}
+
+              <div className="welcome-actions" style={{ marginTop: 4 }}>
+                <button className="welcome-btn welcome-btn-primary" onClick={handleNewProject}>
+                  <span className="welcome-btn-icon"><Plus size={14} /></span>
+                  <span className="welcome-btn-title">New Project</span>
+                </button>
+                <button className="welcome-btn welcome-btn-secondary" onClick={handleOpen}>
+                  <span className="welcome-btn-icon"><FolderOpen size={14} /></span>
+                  <span className="welcome-btn-title">Open Project…</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Recent Projects */}
+            {recentFiles.length > 0 && (
+              <div className="welcome-section">
+                <div className="welcome-section-header">
+                  <div className="welcome-section-title">Recent Projects</div>
+                  {recentFiles.length > 4 && (
+                    <button className="welcome-section-action">View All</button>
+                  )}
+                </div>
+                <div className="welcome-recent-list">
+                  {recentFiles.slice(0, 5).map((file, i) => (
+                    <button
+                      key={i}
+                      className="welcome-recent-item"
+                      onClick={() => {
+                        (async () => {
+                          try {
+                            const { readTextFile } = await import('@tauri-apps/plugin-fs');
+                            const { deserializeProject } = await import('../utils/projectFile');
+                            const content = await readTextFile(file.filePath);
+                            const data = deserializeProject(content);
+                            onLoadProject(data, file.filePath);
+                          } catch {
+                            alert(`Could not open: ${file.name}`);
+                          }
+                        })();
+                      }}
+                    >
+                      <div className="welcome-recent-thumb">🎨</div>
+                      <div className="welcome-recent-info">
+                        <div className="welcome-recent-name">{file.name}</div>
+                        <div className="welcome-recent-meta">
+                          {file.canvasSize} · {new Date(file.timestamp).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <MoreHorizontal size={14} className="welcome-recent-more" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+          </div>
+
+          <div className="welcome-footer">
+            v0.1.0 · Built with ❤ and Tauri
+          </div>
+        </div>
+
       </div>
     </div>
   );

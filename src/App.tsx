@@ -2,14 +2,17 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import Canvas, { type CanvasHandle } from './components/Canvas';
 import PreviewCanvas, { type PreviewTool, type PreviewCanvasHandle } from './components/PreviewCanvas';
 import Timeline from './components/Timeline';
+import AnimationView from './components/AnimationView';
 import WelcomeScreen from './components/WelcomeScreen';
+import TabBar from './components/TabBar';
+import NewProjectDialog from './components/NewProjectDialog';
 import { usePlayback } from './hooks/usePlayback';
 import { exportGif } from './utils/gifExport';
 import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './utils/drawing';
 import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform, bakeLayerTransform } from './utils';
-import { saveProjectAs, saveProjectToPath, openProjectFile } from './utils/projectFile';
+import { saveProjectAs, saveProjectToPath, openProjectFile, deserializeProject } from './utils/projectFile';
 import { autoSaveProject, addRecentFile } from './utils/autoSave';
-import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData, SelectionState } from './types';
+import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData, SelectionState, TabState, Frame } from './types';
 import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
@@ -176,14 +179,225 @@ const DEFAULT_BRUSHES = [
   }
 ];
 
+// ── Tab helpers ──────────────────────────────────────────────
+function makeTabId() {
+  return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function createNewTab(size: GridSizeType = 32, name = 'Untitled'): TabState {
+  const defaultFrame = createDefaultFrame(size);
+  return {
+    id: makeTabId(),
+    name,
+    filePath: null,
+    isDirty: false,
+    gridSize: size,
+    animState: {
+      frames: [defaultFrame],
+      activeFrameIndex: 0,
+      activeLayerId: defaultFrame.layers[0].id,
+      selectedLayerIds: [defaultFrame.layers[0].id],
+    },
+    currentColor: '#000000',
+    currentTool: 'brush',
+    undoStack: [],
+    redoStack: [],
+    pan: { x: 0, y: 0 },
+    pixelSize: 32,
+  };
+}
+
+function tabFromProjectData(data: ProjectData, filePath: string): TabState {
+  const name = filePath.split(/[/\\]/).pop() ?? 'Untitled';
+  return {
+    id: makeTabId(),
+    name,
+    filePath,
+    isDirty: false,
+    gridSize: data.canvas.width,
+    animState: data.animState,
+    currentColor: data.currentColor,
+    currentTool: data.currentTool,
+    undoStack: [],
+    redoStack: [],
+    pan: { x: 0, y: 0 },
+    pixelSize: 32,
+  };
+}
+
 export default function App() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [gridSize, setGridSize] = useState<GridSizeType>(16);
   const [pixelSize, setPixelSize] = useState(32);
+
+  // ── Tab management ───────────────────────────────────────────
+  const [tabs, setTabs] = useState<TabState[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string>('');
+
+  // Save current per-tab state back into the tabs array before switching
+  // (called internally by switchToTab)
+
+  // Switch to a different tab — flush current state into tabs, then load new tab
+  const switchToTab = useCallback((tabId: string) => {
+    if (tabId === activeTabId) return;
+
+    // Flush current live state into the current tab slot
+    setTabs(prev => prev.map(t => {
+      if (t.id !== activeTabId) return t;
+      return {
+        ...t,
+        pan: { ...panRef.current },
+        pixelSize: pixelSizeRef.current,
+      };
+    }));
+
+    // Load the target tab's state
+    setTabs(prev => {
+      const target = prev.find(t => t.id === tabId);
+      if (!target) return prev;
+      setGridSize(target.gridSize);
+      setPixelSize(target.pixelSize);
+      setAnimState(target.animState);
+      setCurrentColor(target.currentColor);
+      setCurrentTool(target.currentTool);
+      setUndoStack(target.undoStack);
+      setRedoStack(target.redoStack);
+      setCurrentFilePath(target.filePath);
+      setIsDirty(target.isDirty);
+      // Restore pan
+      panRef.current = { ...target.pan };
+      hasCentered.current = target.pan.x !== 0 || target.pan.y !== 0;
+      if (transformContainerRef.current) {
+        transformContainerRef.current.style.transform =
+          `translate(${target.pan.x}px, ${target.pan.y}px)`;
+      }
+      return prev;
+    });
+    setActiveTabId(tabId);
+    setSelection(null);
+  }, [activeTabId]);
+
+  // Open a project file as a new tab (or focus existing tab with same path)
+  const openFileAsTab = useCallback(async (filePath?: string) => {
+    try {
+      let data: ProjectData;
+      let resolvedPath: string;
+      if (filePath) {
+        const { readTextFile } = await import('@tauri-apps/plugin-fs');
+        const content = await readTextFile(filePath);
+        data = deserializeProject(content);
+        resolvedPath = filePath;
+      } else {
+        const result = await openProjectFile();
+        if (!result) return;
+        data = result.data;
+        resolvedPath = result.filePath;
+      }
+      // Check if already open
+      setTabs(prev => {
+        const existing = prev.find(t => t.filePath === resolvedPath);
+        if (existing) {
+          setActiveTabId(existing.id);
+          return prev;
+        }
+        const newTab = tabFromProjectData(data, resolvedPath);
+        addRecentFile(resolvedPath, data.canvas.width);
+        // Switch to new tab
+        setGridSize(newTab.gridSize);
+        setPixelSize(newTab.pixelSize);
+        setAnimState(newTab.animState);
+        setCurrentColor(newTab.currentColor);
+        setCurrentTool(newTab.currentTool);
+        setUndoStack([]);
+        setRedoStack([]);
+        setCurrentFilePath(newTab.filePath);
+        setIsDirty(false);
+        panRef.current = { x: 0, y: 0 };
+        hasCentered.current = false;
+        setActiveTabId(newTab.id);
+        return [...prev, newTab];
+      });
+    } catch (err) {
+      alert(`Open failed: ${(err as Error).message}`);
+    }
+  }, []);
+
+  // Add a brand-new blank tab
+  const addNewTab = useCallback((size: GridSizeType = 32, name = 'Untitled') => {
+    const newTab = createNewTab(size, name);
+    // Flush current state first
+    setTabs(prev => {
+      const flushed = prev.map(t => {
+        if (t.id !== activeTabId) return t;
+        return { ...t, pan: { ...panRef.current }, pixelSize: pixelSizeRef.current };
+      });
+      return [...flushed, newTab];
+    });
+    setGridSize(newTab.gridSize);
+    setPixelSize(newTab.pixelSize);
+    setAnimState(newTab.animState);
+    setCurrentColor(newTab.currentColor);
+    setCurrentTool(newTab.currentTool);
+    setUndoStack([]);
+    setRedoStack([]);
+    setCurrentFilePath(null);
+    setIsDirty(false);
+    panRef.current = { x: 0, y: 0 };
+    hasCentered.current = false;
+    setActiveTabId(newTab.id);
+    setSelection(null);
+  }, [activeTabId]);
+
+  // Close a tab
+  const closeTab = useCallback((tabId: string) => {
+    setTabs(prev => {
+      const tab = prev.find(t => t.id === tabId);
+      if (tab?.isDirty && !window.confirm(`"${tab.name}" has unsaved changes. Close anyway?`)) {
+        return prev;
+      }
+      const next = prev.filter(t => t.id !== tabId);
+      if (next.length === 0) {
+        // No tabs left — show welcome
+        setShowWelcome(true);
+        return next;
+      }
+      if (tabId === activeTabId) {
+        // Switch to adjacent tab
+        const idx = prev.findIndex(t => t.id === tabId);
+        const target = next[Math.min(idx, next.length - 1)];
+        setGridSize(target.gridSize);
+        setPixelSize(target.pixelSize);
+        setAnimState(target.animState);
+        setCurrentColor(target.currentColor);
+        setCurrentTool(target.currentTool);
+        setUndoStack(target.undoStack);
+        setRedoStack(target.redoStack);
+        setCurrentFilePath(target.filePath);
+        setIsDirty(target.isDirty);
+        panRef.current = { ...target.pan };
+        hasCentered.current = target.pan.x !== 0 || target.pan.y !== 0;
+        if (transformContainerRef.current) {
+          transformContainerRef.current.style.transform =
+            `translate(${target.pan.x}px, ${target.pan.y}px)`;
+        }
+        setActiveTabId(target.id);
+        setSelection(null);
+      }
+      return next;
+    });
+  }, [activeTabId]);
+
+  // Sync live state changes back to the active tab slot (debounced via useEffect below)
+  // (reserved for future use)
   const [showGrid, setShowGrid] = useState(false);
   const [brushSize, setBrushSize] = useState<number>(1);
   const [onionSkinEnabled, setOnionSkinEnabled] = useState(false);
   const [animationMode, setAnimationMode] = useState(false);
+  // Animation tab: when true, the tab bar shows an "Animation" tab that replaces the canvas view
+  const [animationTabPinned, setAnimationTabPinned] = useState(false);
+  const [activeView, setActiveView] = useState<'canvas' | 'animation'>('canvas');
+  // New project dialog (shown when user clicks New Project while tabs are open)
+  const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [undoStack, setUndoStack] = useState<AnimationState[]>([]);
   const [redoStack, setRedoStack] = useState<AnimationState[]>([]);
@@ -243,6 +457,10 @@ export default function App() {
       selectedLayerIds: [defaultFrame.layers[0].id]
     };
   });
+  // Ref luôn trỏ đến animState mới nhất — dùng cho các hàm đọc pixel (eyedropper)
+  // để tránh stale closure khi lighten/darken đang trong stroke
+  const animStateRef = useRef(animState);
+  animStateRef.current = animState;
 
   const { frames, activeFrameIndex, activeLayerId, selectedLayerIds = [activeLayerId] } = animState;
   const [currentTool, setCurrentTool] = useState<ToolType>('brush');
@@ -353,12 +571,37 @@ export default function App() {
   // Render on state change
   useEffect(() => {
     if (canvasRef.current && frames[activeFrameIndex]) {
-      const onionFrame = (onionSkinEnabled && activeFrameIndex > 0 && !isPlaying)
-        ? frames[activeFrameIndex - 1]
-        : null;
-      // Use requestAnimationFrame to ensure Canvas.tsx's internal resize effect runs first
+      let onionFrames: { frame: Frame; tint: 'prev' | 'next'; opacity: number }[] | null = null;
+
+      if (onionSkinEnabled && !isPlaying && frames.length > 1) {
+        onionFrames = [];
+
+        // Render xa nhất trước (thấp opacity), gần nhất sau (cao opacity)
+        // → frame gần nhất nằm trên cùng, nhìn rõ hơn frame xa
+        const prevOpacities = [0.40, 0.22, 0.10]; // index 0 = d=1 (gần), index 2 = d=3 (xa)
+        const nextOpacities = [0.30, 0.16, 0.07];
+
+        // Push prev từ xa → gần (d=3 → d=1)
+        for (let d = 3; d >= 1; d--) {
+          const idx = activeFrameIndex - d;
+          if (idx >= 0) {
+            onionFrames.push({ frame: frames[idx], tint: 'prev', opacity: prevOpacities[d - 1] });
+          }
+        }
+
+        // Push next từ xa → gần (d=3 → d=1)
+        for (let d = 3; d >= 1; d--) {
+          const idx = activeFrameIndex + d;
+          if (idx < frames.length) {
+            onionFrames.push({ frame: frames[idx], tint: 'next', opacity: nextOpacities[d - 1] });
+          }
+        }
+
+        if (onionFrames.length === 0) onionFrames = null;
+      }
+
       requestAnimationFrame(() => {
-        canvasRef.current?.renderFrame(frames[activeFrameIndex], onionFrame);
+        canvasRef.current?.renderFrame(frames[activeFrameIndex], onionFrames);
       });
     }
   }, [frames, activeFrameIndex, onionSkinEnabled, isPlaying, pixelSize, showGrid]);
@@ -625,50 +868,79 @@ export default function App() {
         await saveProjectToPath(currentFilePath, gridSize, animState, currentColor, currentTool);
         setIsDirty(false);
         addRecentFile(currentFilePath, gridSize);
+        // Sync clean state to tab
+        setTabs(prev => prev.map(t =>
+          t.id === activeTabId ? { ...t, isDirty: false } : t
+        ));
       } catch (err) {
         alert(`Save failed: ${(err as Error).message}`);
       }
     } else {
       handleSaveAs();
     }
-  }, [currentFilePath, gridSize, animState, currentColor, currentTool]);
+  }, [currentFilePath, gridSize, animState, currentColor, currentTool, activeTabId]);
 
   const handleSaveAs = useCallback(async () => {
     try {
       const path = await saveProjectAs(gridSize, animState, currentColor, currentTool);
       if (path && path !== 'web-download') {
+        const name = path.split(/[/\\]/).pop() ?? 'Untitled';
         setCurrentFilePath(path);
         setIsDirty(false);
         addRecentFile(path, gridSize);
+        // Update tab name and path
+        setTabs(prev => prev.map(t =>
+          t.id === activeTabId ? { ...t, filePath: path, name, isDirty: false } : t
+        ));
       }
     } catch (err) {
       alert(`Save failed: ${(err as Error).message}`);
     }
-  }, [gridSize, animState, currentColor, currentTool]);
+  }, [gridSize, animState, currentColor, currentTool, activeTabId]);
 
   const handleOpenFile = useCallback(async () => {
-    if (isDirty && !window.confirm('You have unsaved changes. Continue?')) return;
-    try {
-      const result = await openProjectFile();
-      if (result) {
-        loadProjectData(result.data, result.filePath);
-      }
-    } catch (err) {
-      alert(`Open failed: ${(err as Error).message}`);
-    }
-  }, [isDirty]);
+    // Open in a new tab — no dirty check needed for current tab
+    openFileAsTab();
+  }, [openFileAsTab]);
 
   const loadProjectData = (data: ProjectData, filePath: string) => {
-    setGridSize(data.canvas.width);
-    setAnimState(data.animState);
-    setCurrentColor(data.currentColor);
-    setCurrentTool(data.currentTool);
-    setCurrentFilePath(filePath);
-    setIsDirty(false);
-    setUndoStack([]);
-    setRedoStack([]);
+    const newTab = tabFromProjectData(data, filePath);
+    // Check if already open in a tab
+    setTabs(prev => {
+      const existing = prev.find(t => t.filePath === filePath);
+      if (existing) {
+        setActiveTabId(existing.id);
+        setGridSize(existing.gridSize);
+        setPixelSize(existing.pixelSize);
+        setAnimState(existing.animState);
+        setCurrentColor(existing.currentColor);
+        setCurrentTool(existing.currentTool);
+        setUndoStack(existing.undoStack);
+        setRedoStack(existing.redoStack);
+        setCurrentFilePath(existing.filePath);
+        setIsDirty(existing.isDirty);
+        return prev;
+      }
+      // Flush current tab state
+      const flushed = prev.map(t => {
+        if (t.id !== activeTabId) return t;
+        return { ...t, pan: { ...panRef.current }, pixelSize: pixelSizeRef.current };
+      });
+      setGridSize(newTab.gridSize);
+      setPixelSize(newTab.pixelSize);
+      setAnimState(newTab.animState);
+      setCurrentColor(newTab.currentColor);
+      setCurrentTool(newTab.currentTool);
+      setUndoStack([]);
+      setRedoStack([]);
+      setCurrentFilePath(newTab.filePath);
+      setIsDirty(false);
+      panRef.current = { x: 0, y: 0 };
+      hasCentered.current = false;
+      setActiveTabId(newTab.id);
+      return [...flushed, newTab];
+    });
     setShowWelcome(false);
-    hasCentered.current = false;
     addRecentFile(filePath, data.canvas.width);
   };
 
@@ -684,7 +956,13 @@ export default function App() {
 
   // --- Mark dirty on edits ---
   useEffect(() => {
-    if (!showWelcome) setIsDirty(true);
+    if (!showWelcome) {
+      setIsDirty(true);
+      // Sync dirty flag into the active tab
+      setTabs(prev => prev.map(t =>
+        t.id === activeTabId ? { ...t, isDirty: true } : t
+      ));
+    }
   }, [animState]);
 
   // --- Prompt before close ---
@@ -843,8 +1121,10 @@ export default function App() {
     x >= 0 && x < gridSize && y >= 0 && y < gridSize;
 
   const pickTopmostVisibleLayerAt = (mouseX: number, mouseY: number) => {
-    for (let i = layers.length - 1; i >= 0; i--) {
-      const layer = layers[i];
+    // Đọc từ ref để luôn lấy state mới nhất, tránh stale closure khi lighten/darken đang stroke
+    const currentLayers = animStateRef.current.frames[animStateRef.current.activeFrameIndex]?.layers ?? layers;
+    for (let i = currentLayers.length - 1; i >= 0; i--) {
+      const layer = currentLayers[i];
       if (!layer.visible) continue;
       const { gridX, gridY } = screenToLayerGrid(layer, mouseX, mouseY);
       if (!isGridCoordInBounds(gridX, gridY)) continue;
@@ -2068,7 +2348,7 @@ export default function App() {
   const titleSuffix = isDirty ? '• ' : '';
 
   const actions: ActionMap = {
-    newFile: () => setShowWelcome(true),
+    newFile: () => setShowNewProjectDialog(true),
     openFile: () => handleOpenFile(),
     save: () => handleSave(),
     saveAs: () => handleSaveAs(),
@@ -2125,33 +2405,35 @@ export default function App() {
     return (
       <WelcomeScreen
         onNewProject={(size) => {
-          setGridSize(size);
-          const defaultFrame = createDefaultFrame(size);
-          setAnimState({
-            frames: [defaultFrame],
-            activeFrameIndex: 0,
-            activeLayerId: defaultFrame.layers[0].id,
-            selectedLayerIds: [defaultFrame.layers[0].id]
-          });
-          setCurrentFilePath(null);
-          setIsDirty(false);
-          setUndoStack([]);
-          setRedoStack([]);
+          addNewTab(size);
           setShowWelcome(false);
-          hasCentered.current = false;
         }}
-        onLoadProject={(data, filePath) => loadProjectData(data, filePath)}
+        onLoadProject={(data, filePath) => {
+          loadProjectData(data, filePath);
+          setShowWelcome(false);
+        }}
         onContinue={(data) => {
-          setGridSize(data.canvas.width);
-          setAnimState(data.animState);
-          setCurrentColor(data.currentColor);
-          setCurrentTool(data.currentTool);
-          setCurrentFilePath(null);
-          setIsDirty(false);
+          // Continue from autosave — open as a new tab named "Autosave"
+          const newTab = createNewTab(data.canvas.width, 'Autosave');
+          const loaded: TabState = {
+            ...newTab,
+            animState: data.animState,
+            currentColor: data.currentColor,
+            currentTool: data.currentTool,
+          };
+          setTabs([loaded]);
+          setActiveTabId(loaded.id);
+          setGridSize(loaded.gridSize);
+          setPixelSize(loaded.pixelSize);
+          setAnimState(loaded.animState);
+          setCurrentColor(loaded.currentColor);
+          setCurrentTool(loaded.currentTool);
           setUndoStack([]);
           setRedoStack([]);
-          setShowWelcome(false);
+          setCurrentFilePath(null);
+          setIsDirty(false);
           hasCentered.current = false;
+          setShowWelcome(false);
         }}
       />
     );
@@ -2160,8 +2442,52 @@ export default function App() {
   return (
     <div className="layout">
       <MenuBar config={menuConfig} actions={actions} title="Pixly" subtitle={`${titleSuffix}${fileName}`} />
+      <TabBar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSelectTab={switchToTab}
+        onCloseTab={closeTab}
+        onNewTab={() => setShowNewProjectDialog(true)}
+        animationTabPinned={animationTabPinned}
+        activeView={activeView}
+        onSelectView={setActiveView}
+        onUnpinAnimationTab={() => { setAnimationTabPinned(false); setActiveView('canvas'); }}
+        onDropFile={async (file) => {
+          try {
+            const text = await file.text();
+            const data = deserializeProject(text);
+            // Use filename as path key (web context — no real path)
+            loadProjectData(data, file.name);
+          } catch {
+            alert(`Could not open: ${file.name}`);
+          }
+        }}
+      />
       {isPlaying && <div className="playback-badge">PLAYING</div>}
-      <div className="workspace">
+
+      {/* ── Animation tab full-screen view ── */}
+      {animationTabPinned && activeView === 'animation' && (
+        <div className="animation-view">
+          <AnimationView
+            animState={animState}
+            gridSize={gridSize}
+            isPlaying={isPlaying}
+            onionSkinEnabled={onionSkinEnabled}
+            onSelectFrame={handleFrameChange}
+            onAddFrame={handleAddFrame}
+            onDuplicateFrame={handleDuplicateFrame}
+            onDeleteFrame={handleDeleteFrame}
+            onTogglePlay={() => togglePlay(activeFrameIndex)}
+            onToggleOnionSkin={() => setOnionSkinEnabled(!onionSkinEnabled)}
+            onSetDuration={handleSetDuration}
+            onSetDurationAll={handleSetDurationAll}
+            onReorderFrame={handleReorderFrame}
+            onToggleLayerVisibility={toggleLayerVisibility}
+          />
+        </div>
+      )}
+
+      <div className="workspace" style={{ display: animationTabPinned && activeView === 'animation' ? 'none' : 'flex' }}>
         {showLeftSidebar && (
           <div className="sidebar" style={{ width: leftSidebarWidth }}>
             <div
@@ -2205,7 +2531,7 @@ export default function App() {
 
 
             <div className="brush-size-container" style={{ width: '100%', padding: '0 12px', display: 'flex', flexDirection: 'column', gap: '6px', boxSizing: 'border-box' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#aaa', userSelect: 'none' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', userSelect: 'none' }}>
                 <span>Size</span>
                 <span>{brushSize}px</span>
               </div>
@@ -2215,7 +2541,7 @@ export default function App() {
                 max="24"
                 value={brushSize}
                 onChange={(e) => setBrushSize(parseInt(e.target.value, 10))}
-                style={{ width: '100%', cursor: 'pointer', accentColor: '#4f46e5' }}
+                style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--accent-light)' }}
               />
             </div>
 
@@ -2397,7 +2723,7 @@ export default function App() {
             />
             <div className="right-sidebar-header">
               <span>Layers</span>
-              <button className="tool-icon-btn" style={{ width: 28, height: 28 }} onClick={addLayer}><Plus size={16} /></button>
+              <button className="tool-icon-btn" style={{ width: 26, height: 26 }} onClick={addLayer}><Plus size={14} /></button>
             </div>
             <div className="layer-list">
               {[...layers].reverse().map(layer => {
@@ -2456,6 +2782,11 @@ export default function App() {
           onSetDuration={handleSetDuration}
           onSetDurationAll={handleSetDurationAll}
           onReorderFrame={handleReorderFrame}
+          onPinToTab={() => {
+            setAnimationTabPinned(true);
+            setActiveView('animation');
+            setAnimationMode(true);
+          }}
         />
       )}
 
@@ -2537,6 +2868,17 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* New Project Dialog */}
+      {showNewProjectDialog && (
+        <NewProjectDialog
+          onConfirm={(size, name) => {
+            setShowNewProjectDialog(false);
+            addNewTab(size, name);
+          }}
+          onCancel={() => setShowNewProjectDialog(false)}
+        />
       )}
 
       {/* Update Notification Toast */}

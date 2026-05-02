@@ -8,8 +8,11 @@ interface CanvasProps {
 }
 
 export interface CanvasHandle {
-  /** Render a single frame: layers + transform */
-  renderFrame: (frame: Frame, onionFrame?: Frame | null) => void;
+  /** Render a single frame with optional onion skin frames */
+  renderFrame: (
+    frame: Frame,
+    onionFrames?: { frame: Frame; tint: 'prev' | 'next'; opacity: number }[] | null,
+  ) => void;
 }
 
 const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, showGrid }, ref) => {
@@ -102,7 +105,13 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     }
   };
 
-  const renderLayers = (ctx: CanvasRenderingContext2D, layers: Layer[], gs: number, ps: number) => {
+  const renderLayers = (
+    ctx: CanvasRenderingContext2D,
+    layers: Layer[],
+    gs: number,
+    ps: number,
+    tint?: 'prev' | 'next',
+  ) => {
     // Create an offscreen buffer at 1:1 scale to avoid seams between pixels
     const buffer = document.createElement('canvas');
     buffer.width = gs;
@@ -125,21 +134,28 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
         for (let x = 0; x < gs; x++) {
           const color = layer.grid[y]?.[x];
           if (color) {
-            bCtx.fillStyle = color;
+            if (tint) {
+              // Convert pixel to tinted color: prev = red-orange, next = blue-green
+              bCtx.fillStyle = tint === 'prev' ? '#ff6b35' : '#35a7ff';
+            } else {
+              bCtx.fillStyle = color;
+            }
             bCtx.fillRect(x, y, 1, 1);
           }
         }
       }
 
       // Draw the buffer to the main canvas scaled up
-      // imageSmoothingEnabled = false is already set on the main ctx in setupCanvas
       ctx.drawImage(buffer, 0, 0, gs, gs, 0, 0, gs * ps, gs * ps);
       
       ctx.restore();
     }
   };
 
-  const doRender = (frame: Frame, onionFrame?: Frame | null) => {
+  const doRender = (
+    frame: Frame,
+    onionFrames?: { frame: Frame; tint: 'prev' | 'next'; opacity: number }[] | null,
+  ) => {
     const ctx = ctxRef.current;
     if (!ctx) return;
 
@@ -150,15 +166,17 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     // 1. Clear (checkerboard is now handled by CSS background)
     ctx.clearRect(0, 0, logicalW, logicalH);
 
-    // 2. Onion skin (previous frame at low opacity)
-    if (onionFrame) {
-      ctx.save();
-      ctx.globalAlpha = 0.2;
-      renderLayers(ctx, onionFrame.layers, gs, ps);
-      ctx.restore();
+    // 2. Onion skin frames (prev = red-orange tint, next = blue tint)
+    if (onionFrames) {
+      for (const { frame: oFrame, tint, opacity } of onionFrames) {
+        ctx.save();
+        ctx.globalAlpha = opacity;
+        renderLayers(ctx, oFrame.layers, gs, ps, tint);
+        ctx.restore();
+      }
     }
 
-    // 3. Current frame with transform
+    // 3. Current frame
     renderLayers(ctx, frame.layers, gs, ps);
 
     // 4. Grid overlay (un-transformed)
@@ -176,8 +194,11 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
   // ---------- imperative API ----------
 
   useImperativeHandle(ref, () => ({
-    renderFrame: (frame: Frame, onionFrame?: Frame | null) => {
-      doRender(frame, onionFrame);
+    renderFrame: (
+      frame: Frame,
+      onionFrames?: { frame: Frame; tint: 'prev' | 'next'; opacity: number }[] | null,
+    ) => {
+      doRender(frame, onionFrames);
     },
   }));
 
