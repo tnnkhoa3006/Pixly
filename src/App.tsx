@@ -16,6 +16,7 @@ import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, Pro
 import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
 import { check, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
+import VantaBackground from './components/VantaBackground';
 
 import {
   Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle,
@@ -2403,39 +2404,41 @@ export default function App() {
   // --- Welcome Screen ---
   if (showWelcome) {
     return (
-      <WelcomeScreen
-        onNewProject={(size) => {
-          addNewTab(size);
-          setShowWelcome(false);
-        }}
-        onLoadProject={(data, filePath) => {
-          loadProjectData(data, filePath);
-          setShowWelcome(false);
-        }}
-        onContinue={(data) => {
-          // Continue from autosave — open as a new tab named "Autosave"
-          const newTab = createNewTab(data.canvas.width, 'Autosave');
-          const loaded: TabState = {
-            ...newTab,
-            animState: data.animState,
-            currentColor: data.currentColor,
-            currentTool: data.currentTool,
-          };
-          setTabs([loaded]);
-          setActiveTabId(loaded.id);
-          setGridSize(loaded.gridSize);
-          setPixelSize(loaded.pixelSize);
-          setAnimState(loaded.animState);
-          setCurrentColor(loaded.currentColor);
-          setCurrentTool(loaded.currentTool);
-          setUndoStack([]);
-          setRedoStack([]);
-          setCurrentFilePath(null);
-          setIsDirty(false);
-          hasCentered.current = false;
-          setShowWelcome(false);
-        }}
-      />
+      <div className="app-root-container">
+        <VantaBackground />
+        <WelcomeScreen
+          onNewProject={(size) => {
+            addNewTab(size);
+            setShowWelcome(false);
+          }}
+          onLoadProject={(data, filePath) => {
+            loadProjectData(data, filePath);
+            setShowWelcome(false);
+          }}
+          onContinue={(data) => {
+            const newTab = createNewTab(data.canvas.width, 'Autosave');
+            const loaded: TabState = {
+              ...newTab,
+              animState: data.animState,
+              currentColor: data.currentColor,
+              currentTool: data.currentTool,
+            };
+            setTabs([loaded]);
+            setActiveTabId(loaded.id);
+            setGridSize(loaded.gridSize);
+            setPixelSize(loaded.pixelSize);
+            setAnimState(loaded.animState);
+            setCurrentColor(loaded.currentColor);
+            setCurrentTool(loaded.currentTool);
+            setUndoStack([]);
+            setRedoStack([]);
+            setCurrentFilePath(null);
+            setIsDirty(false);
+            hasCentered.current = false;
+            setShowWelcome(false);
+          }}
+        />
+      </div>
     );
   }
 
