@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { X, Plus } from 'lucide-react';
-import type { GridSizeType } from '../types';
+import type { GridSizeType } from '../../types';
 
 const SIZE_PRESETS: { size: number; label: string }[] = [
   { size: 16,  label: 'Icon'   },

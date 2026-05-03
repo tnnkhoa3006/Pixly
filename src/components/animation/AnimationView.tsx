@@ -3,7 +3,7 @@ import {
   Play, Square, SkipBack, SkipForward, ChevronLeft, ChevronRight,
   Plus, Copy, Trash2, Eye, EyeOff, RefreshCw, RotateCcw
 } from 'lucide-react';
-import type { Frame, AnimationState } from '../types';
+import type { Frame, AnimationState } from '../../types';
 
 // ─── Thumbnail size for the preview strip ───────────────────
 const THUMB_W = 64;

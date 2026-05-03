@@ -1,5 +1,5 @@
 import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
-import { rasterizeGeometry } from '../utils/drawing';
+import { rasterizeGeometry } from '../../lib/drawing';
 
 export type PreviewTool = 'line' | 'rect' | 'circle' | 'select' | null;
 

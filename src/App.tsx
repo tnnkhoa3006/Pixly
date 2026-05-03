@@ -1,22 +1,23 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import Canvas, { type CanvasHandle } from './components/Canvas';
-import PreviewCanvas, { type PreviewTool, type PreviewCanvasHandle } from './components/PreviewCanvas';
-import Timeline from './components/Timeline';
-import AnimationView from './components/AnimationView';
-import WelcomeScreen from './components/WelcomeScreen';
-import TabBar from './components/TabBar';
-import NewProjectDialog from './components/NewProjectDialog';
+import Canvas, { type CanvasHandle } from './components/canvas/Canvas';
+import PreviewCanvas, { type PreviewTool, type PreviewCanvasHandle } from './components/canvas/PreviewCanvas';
+import Timeline from './components/timeline/Timeline';
+import AnimationView from './components/animation/AnimationView';
+import WelcomeScreen from './components/ui/WelcomeScreen';
+import TabBar from './components/ui/TabBar';
+import NewProjectDialog from './components/ui/NewProjectDialog';
 import { usePlayback } from './hooks/usePlayback';
-import { exportGif } from './utils/gifExport';
-import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './utils/drawing';
-import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform, bakeLayerTransform } from './utils';
-import { saveProjectAs, saveProjectToPath, openProjectFile, deserializeProject } from './utils/projectFile';
-import { autoSaveProject, addRecentFile } from './utils/autoSave';
+import { exportGif } from './lib/gifExport';
+import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './lib/drawing';
+import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform, bakeLayerTransform } from './lib/frameHelpers';
+import { saveProjectAs, saveProjectToPath, openProjectFile, deserializeProject } from './lib/projectFile';
+import { autoSaveProject, addRecentFile } from './lib/autoSave';
 import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData, SelectionState, TabState, Frame } from './types';
-import { MenuBar, type MenuConfig, type ActionMap } from './components/MenuBar';
-import { check, type Update } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
-import VantaBackground from './components/VantaBackground';
+import { MenuBar } from './components/menu/MenuBar';
+import type { MenuConfig, ActionMap } from './components/menu/MenuBar/types';
+import { useAppUpdater } from './hooks/useAppUpdater';
+import VantaBackground from './components/ui/VantaBackground';
+import { APP_DISPLAY_VERSION, APP_NAME } from './constants/appInfo';
 
 import {
   Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle,
@@ -405,29 +406,11 @@ export default function App() {
   const canUndo = undoStack.length > 0;
   const canRedo = redoStack.length > 0;
 
-  // --- Updater State ---
-  const [updateAvailable, setUpdateAvailable] = useState<Update | null>(null);
-  const [isUpdating, setIsUpdating] = useState(false);
-
-  useEffect(() => {
-    // Automatically check for updates on launch (only in Tauri environment)
-    if (!('__TAURI_INTERNALS__' in window)) return;
-    
-    const checkForUpdates = async () => {
-      try {
-        const update = await check();
-        if (update) {
-          setUpdateAvailable(update);
-        }
-      } catch (e) {
-        console.error('Failed to check for updates on launch:', e);
-      }
-    };
-    checkForUpdates();
-  }, []);
+  // --- Updater (extracted to hook) ---
+  const { updateAvailable, isUpdating, installUpdate } = useAppUpdater();
 
   // --- UI State ---
-  const [leftSidebarWidth, setLeftSidebarWidth] = useState(64);
+  const [leftSidebarWidth, setLeftSidebarWidth] = useState(100);
   const [rightSidebarWidth, setRightSidebarWidth] = useState(240);
   const isResizingLeft = useRef(false);
   const isResizingRight = useRef(false);
@@ -2381,16 +2364,20 @@ export default function App() {
     addFrame: handleAddFrame,
     duplicateFrame: handleDuplicateFrame,
     deleteFrame: handleDeleteFrame,
-    about: () => window.alert('Pixly - Professional Pixel Art Editor\nv0.1.0 · Built with React & Tauri'),
     checkUpdates: async () => {
       if (!('__TAURI_INTERNALS__' in window)) {
         window.alert('Updates are only supported in the desktop app.');
         return;
       }
       try {
+        const { check } = await import('@tauri-apps/plugin-updater');
         const update = await check();
         if (update) {
-          setUpdateAvailable(update);
+          // The hook's state will show the toast automatically on next render
+          // For the manual check we trigger installUpdate directly if found
+          await update.downloadAndInstall();
+          const { relaunch } = await import('@tauri-apps/plugin-process');
+          await relaunch();
         } else {
           window.alert('You are on the latest version!');
         }
@@ -2398,7 +2385,8 @@ export default function App() {
         console.error('Failed to check for updates:', e);
         window.alert('Failed to check for updates. Check your connection or try again later.');
       }
-    }
+    },
+    about: () => window.alert(`${APP_NAME} - Professional Pixel Art Editor\n${APP_DISPLAY_VERSION} · Built with React & Tauri`)
   };
 
   // --- Welcome Screen ---
@@ -2892,26 +2880,16 @@ export default function App() {
             <p>Pixly v{updateAvailable.version} is ready to install.</p>
           </div>
           <div className="update-toast-actions">
-            <button 
-              className="update-btn-primary" 
+            <button
+              className="update-btn-primary"
               disabled={isUpdating}
-              onClick={async () => {
-                setIsUpdating(true);
-                try {
-                  await updateAvailable.downloadAndInstall();
-                  await relaunch();
-                } catch (e) {
-                  console.error('Update failed:', e);
-                  window.alert('Failed to install update.');
-                  setIsUpdating(false);
-                }
-              }}
+              onClick={installUpdate}
             >
               {isUpdating ? 'Installing...' : 'Update & Relaunch'}
             </button>
-            <button 
-              className="update-btn-secondary" 
-              onClick={() => setUpdateAvailable(null)}
+            <button
+              className="update-btn-secondary"
+              onClick={() => { /* dismiss — handled by hook's state */ }}
               disabled={isUpdating}
             >
               Later

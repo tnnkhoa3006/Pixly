@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useRef, useImperativeHandle } from 'react';
-import type { Frame, Layer, LayerTransform } from '../types';
+import type { Frame, Layer, LayerTransform } from '../../types';
 
 interface CanvasProps {
   gridSize: number;

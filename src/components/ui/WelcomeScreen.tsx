@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
-import { FolderOpen, Plus, MoreHorizontal } from 'lucide-react';
-import type { GridSizeType, ProjectData } from '../types';
-import { hasAutoSave, loadAutoSave, getRecentFiles, type RecentFile } from '../utils/autoSave';
-import { openProjectFile } from '../utils/projectFile';
+import { useEffect, useState } from 'react';
+import { FolderOpen, MoreHorizontal, Plus } from 'lucide-react';
+import { APP_DISPLAY_VERSION, APP_NAME } from '../../constants/appInfo';
+import type { GridSizeType, ProjectData } from '../../types';
+import { getRecentFiles, hasAutoSave, loadAutoSave, type RecentFile } from '../../lib/autoSave';
+import { openProjectFile, deserializeProject } from '../../lib/projectFile';
 
 interface WelcomeScreenProps {
   onNewProject: (size: GridSizeType) => void;
@@ -11,11 +12,12 @@ interface WelcomeScreenProps {
 }
 
 const SIZE_PRESETS: { size: number; label: string }[] = [
-  { size: 16,  label: 'Icon'   },
-  { size: 32,  label: 'Small'  },
-  { size: 64,  label: 'Tile'   },
+  { size: 16, label: 'Icon' },
+  { size: 32, label: 'Small' },
+  { size: 64, label: 'Tile' },
   { size: 128, label: 'Sprite' },
 ];
+
 const MAX_SIZE = 512;
 
 export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue }: WelcomeScreenProps) {
@@ -37,7 +39,9 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
           if (data?.savedAt) {
             setAutoSaveDate(new Date(data.savedAt).toLocaleString());
           }
-        } catch { /* ignore */ }
+        } catch {
+          // Ignore autosave read errors on the welcome screen.
+        }
       }
       setRecentFiles(getRecentFiles());
       setLoading(false);
@@ -60,12 +64,12 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
 
   const handleCustomCreate = () => {
     const val = parseInt(customSize, 10);
-    if (isNaN(val) || val < 1) {
+    if (Number.isNaN(val) || val < 1) {
       setCustomError('Please enter a valid number');
       return;
     }
     if (val > MAX_SIZE) {
-      setCustomError(`Max size is ${MAX_SIZE}×${MAX_SIZE}`);
+      setCustomError(`Max size is ${MAX_SIZE}x${MAX_SIZE}`);
       return;
     }
     setCustomError('');
@@ -80,7 +84,7 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
   if (loading) {
     return (
       <div className="welcome-screen">
-        <div className="welcome-loading">Loading…</div>
+        <div className="welcome-loading">Loading...</div>
       </div>
     );
   }
@@ -88,10 +92,7 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
   return (
     <div className="welcome-screen">
       <div className="welcome-layout">
-
-        {/* ── Left hero panel ── */}
         <div className="welcome-hero">
-          {/* Sparkle decorations */}
           <div className="welcome-sparkles" aria-hidden="true">
             <span className="welcome-sparkle">✦</span>
             <span className="welcome-sparkle">✧</span>
@@ -102,19 +103,14 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
 
           <div className="welcome-hero-content">
             <div className="welcome-hero-label">Welcome to</div>
-            <div className="welcome-logo">Pixly</div>
-            <div className="welcome-version">v0.1.0</div>
-            <div className="welcome-tagline">
-              Design, animate, and bring pixels to life.
-            </div>
+            <div className="welcome-logo">{APP_NAME}</div>
+            <div className="welcome-version">{APP_DISPLAY_VERSION}</div>
+            <div className="welcome-tagline">Design, animate, and bring pixels to life.</div>
           </div>
         </div>
 
-        {/* ── Right content panel ── */}
         <div className="welcome-card">
           <div className="welcome-card-inner">
-
-            {/* Continue last project */}
             {hasAuto && (
               <div className="welcome-actions">
                 <button className="welcome-btn welcome-btn-primary" onClick={handleContinue}>
@@ -127,7 +123,6 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
               </div>
             )}
 
-            {/* New Project */}
             <div className="welcome-section">
               <div className="welcome-section-header">
                 <div className="welcome-section-title">Canvas Presets</div>
@@ -143,11 +138,10 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
                     className={`welcome-preset ${selectedPreset === size ? 'active' : ''}`}
                     onClick={() => setSelectedPreset(size)}
                   >
-                    <span className="welcome-preset-size">{size}×{size}</span>
+                    <span className="welcome-preset-size">{size}x{size}</span>
                     <span className="welcome-preset-label">{label}</span>
                   </button>
                 ))}
-                {/* Custom size preset slot */}
                 <button
                   className={`welcome-preset ${selectedPreset === null ? 'active' : ''}`}
                   onClick={() => setSelectedPreset(null)}
@@ -158,7 +152,6 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
                 </button>
               </div>
 
-              {/* Custom size input — shown when Custom is selected */}
               {selectedPreset === null && (
                 <div className="welcome-custom-row">
                   <input
@@ -168,7 +161,10 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
                     min={1}
                     max={MAX_SIZE}
                     value={customSize}
-                    onChange={(e) => { setCustomSize(e.target.value); setCustomError(''); }}
+                    onChange={(e) => {
+                      setCustomSize(e.target.value);
+                      setCustomError('');
+                    }}
                     onKeyDown={(e) => e.key === 'Enter' && handleCustomCreate()}
                     autoFocus
                   />
@@ -184,12 +180,11 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
                 </button>
                 <button className="welcome-btn welcome-btn-secondary" onClick={handleOpen}>
                   <span className="welcome-btn-icon"><FolderOpen size={14} /></span>
-                  <span className="welcome-btn-title">Open Project…</span>
+                  <span className="welcome-btn-title">Open Project...</span>
                 </button>
               </div>
             </div>
 
-            {/* Recent Projects */}
             {recentFiles.length > 0 && (
               <div className="welcome-section">
                 <div className="welcome-section-header">
@@ -207,7 +202,6 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
                         (async () => {
                           try {
                             const { readTextFile } = await import('@tauri-apps/plugin-fs');
-                            const { deserializeProject } = await import('../utils/projectFile');
                             const content = await readTextFile(file.filePath);
                             const data = deserializeProject(content);
                             onLoadProject(data, file.filePath);
@@ -230,14 +224,12 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
                 </div>
               </div>
             )}
-
           </div>
 
           <div className="welcome-footer">
-            v0.1.0 · Built with ❤ and Tauri
+            {APP_DISPLAY_VERSION} · Built with ❤ and Tauri
           </div>
         </div>
-
       </div>
     </div>
   );

@@ -4,7 +4,7 @@ import {
   ChevronLeft, ChevronRight, Layers as OnionIcon,
   GripHorizontal, Minimize2, X, PanelBottomOpen
 } from 'lucide-react';
-import type { Frame } from '../types';
+import type { Frame } from '../../types';
 
 interface TimelineProps {
   frames: Frame[];

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { X, Plus, Film } from 'lucide-react';
-import type { TabState } from '../types';
+import type { TabState } from '../../types';
 
 interface TabBarProps {
   tabs: TabState[];

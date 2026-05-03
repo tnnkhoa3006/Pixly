@@ -1,4 +1,4 @@
-import type { Layer, PixelGrid, Frame, LayerTransform } from './types';
+import type { Layer, PixelGrid, Frame, LayerTransform } from '../types';
 
 export const generateId = (): string =>
   Math.random().toString(36).substring(2, 9);
