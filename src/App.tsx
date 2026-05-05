@@ -16,7 +16,6 @@ import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, Pro
 import { MenuBar } from './components/menu/MenuBar';
 import type { MenuConfig, ActionMap } from './components/menu/MenuBar/types';
 import { useAppUpdater } from './hooks/useAppUpdater';
-import VantaBackground from './components/ui/VantaBackground';
 import { APP_DISPLAY_VERSION, APP_NAME } from './constants/appInfo';
 
 import {
@@ -2393,10 +2392,16 @@ export default function App() {
   if (showWelcome) {
     return (
       <div className="app-root-container">
-        <VantaBackground />
         <WelcomeScreen
           onNewProject={(size) => {
             addNewTab(size);
+            setShowWelcome(false);
+          }}
+          onNewAnimation={(size) => {
+            addNewTab(size);
+            setAnimationTabPinned(true);
+            setActiveView('animation');
+            setAnimationMode(true);
             setShowWelcome(false);
           }}
           onLoadProject={(data, filePath) => {

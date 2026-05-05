@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { FolderOpen, MoreHorizontal, Plus } from 'lucide-react';
+import { useEffect, useState, useCallback } from 'react';
+import { FolderOpen, Film, MoreHorizontal, Play, Grid3X3, Sparkles, Clock, FileImage, Info, ExternalLink } from 'lucide-react';
 import { APP_DISPLAY_VERSION, APP_NAME } from '../../constants/appInfo';
 import type { GridSizeType, ProjectData } from '../../types';
 import { getRecentFiles, hasAutoSave, loadAutoSave, type RecentFile } from '../../lib/autoSave';
@@ -7,27 +7,26 @@ import { openProjectFile, deserializeProject } from '../../lib/projectFile';
 
 interface WelcomeScreenProps {
   onNewProject: (size: GridSizeType) => void;
+  onNewAnimation: (size: GridSizeType) => void;
   onLoadProject: (data: ProjectData, filePath: string) => void;
   onContinue: (data: ProjectData) => void;
 }
 
 const SIZE_PRESETS: { size: number; label: string }[] = [
-  { size: 16, label: 'Icon' },
-  { size: 32, label: 'Small' },
-  { size: 64, label: 'Tile' },
-  { size: 128, label: 'Sprite' },
+  { size: 16, label: '16' },
+  { size: 32, label: '32' },
+  { size: 64, label: '64' },
+  { size: 128, label: '128' },
 ];
 
-const MAX_SIZE = 512;
-
-export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue }: WelcomeScreenProps) {
+export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProject, onContinue }: WelcomeScreenProps) {
   const [hasAuto, setHasAuto] = useState(false);
   const [autoSaveDate, setAutoSaveDate] = useState<string | null>(null);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
-  const [customSize, setCustomSize] = useState('');
-  const [customError, setCustomError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [selectedPreset, setSelectedPreset] = useState<number | null>(32);
+  const [selectedPreset, setSelectedPreset] = useState(32);
+  const [isCustom, setIsCustom] = useState(false);
+  const [customSize, setCustomSize] = useState('64');
 
   useEffect(() => {
     (async () => {
@@ -62,24 +61,32 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
     }
   };
 
-  const handleCustomCreate = () => {
-    const val = parseInt(customSize, 10);
-    if (Number.isNaN(val) || val < 1) {
-      setCustomError('Please enter a valid number');
-      return;
+  const getGridSize = (): number => {
+    if (isCustom) {
+      const parsed = parseInt(customSize, 10);
+      return Math.max(1, Math.min(512, isNaN(parsed) ? 64 : parsed));
     }
-    if (val > MAX_SIZE) {
-      setCustomError(`Max size is ${MAX_SIZE}x${MAX_SIZE}`);
-      return;
-    }
-    setCustomError('');
-    onNewProject(val);
+    return selectedPreset;
   };
 
-  const handleNewProject = () => {
-    const size = selectedPreset ?? 32;
-    onNewProject(size);
-  };
+  const handleNewProject = useCallback(() => onNewProject(getGridSize()), [isCustom, customSize, selectedPreset]);
+  const handleNewAnimation = useCallback(() => onNewAnimation(getGridSize()), [isCustom, customSize, selectedPreset]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
+        const target = e.target as HTMLElement;
+        if (target.tagName === 'INPUT') return;
+        handleNewProject();
+      }
+      if (e.key === 'o' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        handleOpen();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleNewProject, handleOpen]);
 
   if (loading) {
     return (
@@ -92,144 +99,161 @@ export default function WelcomeScreen({ onNewProject, onLoadProject, onContinue 
   return (
     <div className="welcome-screen">
       <div className="welcome-layout">
-        <div className="welcome-hero">
-          <div className="welcome-sparkles" aria-hidden="true">
-            <span className="welcome-sparkle">✦</span>
-            <span className="welcome-sparkle">✧</span>
-            <span className="welcome-sparkle">✦</span>
-            <span className="welcome-sparkle">✧</span>
-            <span className="welcome-sparkle">✦</span>
-          </div>
-
-          <div className="welcome-hero-content">
-            <div className="welcome-hero-label">Welcome to</div>
-            <div className="welcome-logo">{APP_NAME}</div>
-            <div className="welcome-version">{APP_DISPLAY_VERSION}</div>
-            <div className="welcome-tagline">Design, animate, and bring pixels to life.</div>
-          </div>
-        </div>
-
-        <div className="welcome-card">
-          <div className="welcome-card-inner">
+        {/* LEFT SIDEBAR */}
+        <div className="welcome-sidebar">
+          <div className="welcome-sidebar-top">
             {hasAuto && (
-              <div className="welcome-actions">
-                <button className="welcome-btn welcome-btn-primary" onClick={handleContinue}>
-                  <span className="welcome-btn-icon">▶</span>
-                  <div className="welcome-btn-text">
-                    <span className="welcome-btn-title">Continue Last Project</span>
-                    {autoSaveDate && <span className="welcome-btn-sub">{autoSaveDate}</span>}
-                  </div>
-                </button>
-              </div>
-            )}
-
-            <div className="welcome-section">
-              <div className="welcome-section-header">
-                <div className="welcome-section-title">Canvas Presets</div>
-                <span className="welcome-section-action" style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                  Custom Size
+              <button className="welcome-sidebar-btn welcome-sidebar-btn-accent" onClick={handleContinue}>
+                <Play size={14} className="welcome-sidebar-icon" />
+                <span className="welcome-sidebar-label">
+                  Continue
+                  {autoSaveDate && <span className="welcome-sidebar-date">{autoSaveDate}</span>}
                 </span>
-              </div>
-
-              <div className="welcome-presets">
-                {SIZE_PRESETS.map(({ size, label }) => (
-                  <button
-                    key={size}
-                    className={`welcome-preset ${selectedPreset === size ? 'active' : ''}`}
-                    onClick={() => setSelectedPreset(size)}
-                  >
-                    <span className="welcome-preset-size">{size}x{size}</span>
-                    <span className="welcome-preset-label">{label}</span>
-                  </button>
-                ))}
-                <button
-                  className={`welcome-preset ${selectedPreset === null ? 'active' : ''}`}
-                  onClick={() => setSelectedPreset(null)}
-                  title="Custom size"
-                >
-                  <span className="welcome-preset-size" style={{ fontSize: '18px' }}>+</span>
-                  <span className="welcome-preset-label">Custom</span>
-                </button>
-              </div>
-
-              {selectedPreset === null && (
-                <div className="welcome-custom-row">
-                  <input
-                    type="number"
-                    className="welcome-custom-input"
-                    placeholder="e.g. 256"
-                    min={1}
-                    max={MAX_SIZE}
-                    value={customSize}
-                    onChange={(e) => {
-                      setCustomSize(e.target.value);
-                      setCustomError('');
-                    }}
-                    onKeyDown={(e) => e.key === 'Enter' && handleCustomCreate()}
-                    autoFocus
-                  />
-                  <button className="welcome-btn-small" onClick={handleCustomCreate}>Create</button>
-                </div>
-              )}
-              {customError && <div className="welcome-error">{customError}</div>}
-
-              <div className="welcome-actions" style={{ marginTop: 4 }}>
-                <button className="welcome-btn welcome-btn-primary" onClick={handleNewProject}>
-                  <span className="welcome-btn-icon"><Plus size={14} /></span>
-                  <span className="welcome-btn-title">New Project</span>
-                </button>
-                <button className="welcome-btn welcome-btn-secondary" onClick={handleOpen}>
-                  <span className="welcome-btn-icon"><FolderOpen size={14} /></span>
-                  <span className="welcome-btn-title">Open Project...</span>
-                </button>
-              </div>
-            </div>
-
-            {recentFiles.length > 0 && (
-              <div className="welcome-section">
-                <div className="welcome-section-header">
-                  <div className="welcome-section-title">Recent Projects</div>
-                  {recentFiles.length > 4 && (
-                    <button className="welcome-section-action">View All</button>
-                  )}
-                </div>
-                <div className="welcome-recent-list">
-                  {recentFiles.slice(0, 5).map((file, i) => (
-                    <button
-                      key={i}
-                      className="welcome-recent-item"
-                      onClick={() => {
-                        (async () => {
-                          try {
-                            const { readTextFile } = await import('@tauri-apps/plugin-fs');
-                            const content = await readTextFile(file.filePath);
-                            const data = deserializeProject(content);
-                            onLoadProject(data, file.filePath);
-                          } catch {
-                            alert(`Could not open: ${file.name}`);
-                          }
-                        })();
-                      }}
-                    >
-                      <div className="welcome-recent-thumb">🎨</div>
-                      <div className="welcome-recent-info">
-                        <div className="welcome-recent-name">{file.name}</div>
-                        <div className="welcome-recent-meta">
-                          {file.canvasSize} · {new Date(file.timestamp).toLocaleDateString()}
-                        </div>
-                      </div>
-                      <MoreHorizontal size={14} className="welcome-recent-more" />
-                    </button>
-                  ))}
-                </div>
-              </div>
+              </button>
             )}
+
+            <button className="welcome-sidebar-btn" onClick={() => onNewProject(getGridSize())}>
+              <span className="welcome-sidebar-icon welcome-icon-sprite">🎨</span>
+              <span className="welcome-sidebar-label">New Sprite</span>
+            </button>
+
+            <button className="welcome-sidebar-btn" onClick={() => onNewAnimation(getGridSize())}>
+              <Film size={14} className="welcome-sidebar-icon" />
+              <span className="welcome-sidebar-label">New Animation</span>
+            </button>
+
+            <div className="welcome-sidebar-separator" />
+
+            <button className="welcome-sidebar-btn" onClick={handleOpen}>
+              <FolderOpen size={14} className="welcome-sidebar-icon" />
+              <span className="welcome-sidebar-label">Open File</span>
+              <span className="welcome-sidebar-hint">⌘O</span>
+            </button>
           </div>
 
-          <div className="welcome-footer">
-            {APP_DISPLAY_VERSION} · Built with ❤ and Tauri
+          <div className="welcome-sidebar-bottom">
+            <div className="welcome-sidebar-separator" />
+            <a
+              className="welcome-sidebar-btn welcome-sidebar-link"
+              href="https://pixly-lovat.vercel.app/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Info size={14} className="welcome-sidebar-icon" />
+              <span className="welcome-sidebar-label">About</span>
+              <ExternalLink size={10} className="welcome-sidebar-external" />
+            </a>
           </div>
         </div>
+
+        {/* CENTER */}
+        <div className="welcome-center">
+          <div className="welcome-center-brand">
+            <img src="/pixly-icon.png" alt="Pixly" className="welcome-center-logo" />
+            <div className="welcome-center-name">
+              {APP_NAME} <span className="welcome-center-version">{APP_DISPLAY_VERSION}</span>
+            </div>
+          </div>
+
+          <p className="welcome-center-tagline">
+            <Sparkles size={14} className="welcome-tagline-icon" />
+            Pixel art & animation, simplified.
+          </p>
+
+          <div className="welcome-presets">
+            {SIZE_PRESETS.map(({ size, label }) => (
+              <button
+                key={size}
+                className={`welcome-preset ${!isCustom && selectedPreset === size ? 'active' : ''}`}
+                onClick={() => { setSelectedPreset(size); setIsCustom(false); }}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              className={`welcome-preset ${isCustom ? 'active' : ''}`}
+              onClick={() => setIsCustom(true)}
+            >
+              <Grid3X3 size={12} />
+            </button>
+          </div>
+
+          {isCustom && (
+            <div className="welcome-custom-size">
+              <input
+                type="number"
+                className="welcome-custom-input"
+                value={customSize}
+                onChange={(e) => setCustomSize(e.target.value)}
+                min={1}
+                max={512}
+                placeholder="Size"
+              />
+              <span className="welcome-custom-label">px × px</span>
+            </div>
+          )}
+
+          <div className="welcome-center-actions">
+            <button className="welcome-center-btn" onClick={() => onNewProject(getGridSize())}>
+              <span>🎨</span> New Sprite
+            </button>
+            <button className="welcome-center-btn welcome-center-btn-secondary" onClick={() => onNewAnimation(getGridSize())}>
+              <Film size={16} /> New Animation
+            </button>
+          </div>
+        </div>
+
+        {/* RIGHT - Recent Projects */}
+        <div className="welcome-recent">
+          <div className="welcome-recent-header">
+            <Clock size={12} />
+            Recent Projects
+          </div>
+          {recentFiles.length === 0 ? (
+            <div className="welcome-recent-empty">
+              <FileImage size={32} className="welcome-recent-empty-icon" />
+              <span>No recent projects</span>
+              <span className="welcome-recent-empty-hint">Create or open a file to get started</span>
+            </div>
+          ) : (
+            <div className="welcome-recent-list">
+              {recentFiles.slice(0, 8).map((file, i) => (
+                <button
+                  key={i}
+                  className="welcome-recent-item"
+                  onClick={() => {
+                    (async () => {
+                      try {
+                        const { readTextFile } = await import('@tauri-apps/plugin-fs');
+                        const content = await readTextFile(file.filePath);
+                        const data = deserializeProject(content);
+                        onLoadProject(data, file.filePath);
+                      } catch {
+                        alert(`Could not open: ${file.name}`);
+                      }
+                    })();
+                  }}
+                >
+                  <div className="welcome-recent-thumb">
+                    <FileImage size={14} />
+                  </div>
+                  <div className="welcome-recent-info">
+                    <div className="welcome-recent-name">{file.name}</div>
+                    <div className="welcome-recent-meta">
+                      {file.canvasSize} · {new Date(file.timestamp).toLocaleDateString()}
+                    </div>
+                  </div>
+                  <MoreHorizontal size={14} className="welcome-recent-more" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="welcome-footer">
+        <span>{APP_DISPLAY_VERSION} · Built with ❤ and Tauri</span>
+        <span className="welcome-footer-hint">Press Enter to create · ⌘O to open</span>
       </div>
     </div>
   );
