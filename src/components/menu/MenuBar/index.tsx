@@ -57,10 +57,10 @@ export function MenuBar({ config, actions, title, subtitle }: MenuBarProps) {
     >
       {/* App logo + file name */}
       {title && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginRight: '8px' }}>
-          <div className="app-logo" style={{ fontSize: '14px', margin: 0 }}>{title}</div>
+        <div className="menu-bar-app-info">
+          <div className="app-logo">{title}</div>
           {subtitle && (
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', maxWidth: '180px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <div className="menu-bar-subtitle" title={subtitle}>
               {subtitle}
             </div>
           )}
@@ -91,7 +91,7 @@ export function MenuBar({ config, actions, title, subtitle }: MenuBarProps) {
       ))}
 
       {/* Spacer */}
-      <div style={{ flex: 1 }} />
+      <div className="menu-bar-spacer" />
 
       {/* Export button */}
       {actions.exportGif && (

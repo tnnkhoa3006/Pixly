@@ -1,7 +1,7 @@
 import { useRef, useEffect, memo, useState, useCallback } from 'react';
 import {
   Play, Square, SkipBack, SkipForward, ChevronLeft, ChevronRight,
-  Plus, Copy, Trash2, Eye, EyeOff, RefreshCw, RotateCcw
+  Plus, Copy, Trash2, Eye, EyeOff, RefreshCw, RotateCcw, Maximize2, Minimize2
 } from 'lucide-react';
 import type { Frame, AnimationState } from '../../types';
 
@@ -26,11 +26,11 @@ function renderToCanvas(
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, size, size);
 
-  // checkerboard bg
+  // checkerboard bg (dark theme friendly)
   const sq = Math.max(4, Math.round(size / gridSize / 2));
   for (let row = 0; row < Math.ceil(size / sq); row++) {
     for (let col = 0; col < Math.ceil(size / sq); col++) {
-      ctx.fillStyle = (row + col) % 2 === 0 ? '#e5e5e5' : '#ffffff';
+      ctx.fillStyle = (row + col) % 2 === 0 ? '#2a2a3e' : '#22223a';
       ctx.fillRect(col * sq, row * sq, sq, sq);
     }
   }
@@ -68,11 +68,12 @@ function renderToCanvas(
 
 // ─── Frame thumbnail ─────────────────────────────────────────
 const FrameThumb = memo(({
-  frame, index, isActive, gridSize, isDragging, dropTarget, draggable,
+  frame, index, isActive, gridSize, isDragging, dropTarget, draggable, compact,
   onClick, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd,
 }: {
   frame: Frame; index: number; isActive: boolean; gridSize: number;
   isDragging: boolean; dropTarget: 'left' | 'right' | null; draggable: boolean;
+  compact: boolean;
   onClick: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
@@ -82,12 +83,12 @@ const FrameThumb = memo(({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    if (canvasRef.current) renderToCanvas(canvasRef.current, frame, gridSize, THUMB_W);
-  }, [frame, gridSize]);
+    if (!compact && canvasRef.current) renderToCanvas(canvasRef.current, frame, gridSize, THUMB_W);
+  }, [frame, gridSize, compact]);
 
   return (
     <div
-      className={`av-frame-thumb ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${dropTarget === 'left' ? 'drop-target-left' : ''} ${dropTarget === 'right' ? 'drop-target-right' : ''}`}
+      className={`av-frame-thumb ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${compact ? 'compact' : ''} ${dropTarget === 'left' ? 'drop-target-left' : ''} ${dropTarget === 'right' ? 'drop-target-right' : ''}`}
       onClick={onClick}
       draggable={draggable}
       onDragStart={onDragStart}
@@ -97,8 +98,8 @@ const FrameThumb = memo(({
       onDragEnd={onDragEnd}
     >
       <div className="av-frame-num">{index + 1}</div>
-      <canvas ref={canvasRef} className="av-frame-canvas" />
-      <div className="av-frame-dur">{frame.duration}ms</div>
+      {!compact && <canvas ref={canvasRef} className="av-frame-canvas" />}
+      {!compact && <div className="av-frame-dur">{frame.duration}ms</div>}
     </div>
   );
 });
@@ -112,6 +113,68 @@ const PreviewPanel = memo(({ frame, gridSize }: { frame: Frame; gridSize: number
   return (
     <div className="av-preview-wrap">
       <canvas ref={canvasRef} className="av-preview-canvas" />
+    </div>
+  );
+});
+
+// ─── Fullscreen Preview Popup ─────────────────────────────────
+const FullscreenPreview = memo(({ frames, gridSize, onClose }: {
+  frames: Frame[]; gridSize: number; onClose: () => void;
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [currentFrame, setCurrentFrame] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const timerRef = useRef<number | null>(null);
+
+  // Render current frame
+  useEffect(() => {
+    if (canvasRef.current) renderToCanvas(canvasRef.current, frames[currentFrame], gridSize, 400);
+  }, [currentFrame, frames, gridSize]);
+
+  // Auto-play
+  useEffect(() => {
+    if (!isPlaying || frames.length <= 1) return;
+    const duration = frames[currentFrame]?.duration ?? 100;
+    timerRef.current = window.setTimeout(() => {
+      setCurrentFrame(prev => (prev + 1) % frames.length);
+    }, duration);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [isPlaying, currentFrame, frames]);
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      if (e.key === ' ') { e.preventDefault(); setIsPlaying(p => !p); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div className="av-fullscreen-overlay" onClick={onClose}>
+      <div className="av-fullscreen-content" onClick={e => e.stopPropagation()}>
+        <canvas ref={canvasRef} className="av-fullscreen-canvas" />
+        <div className="av-fullscreen-controls">
+          <button className="av-pb-btn" onClick={() => setCurrentFrame(p => Math.max(0, p - 1))} title="Previous frame">
+            <ChevronLeft size={16} />
+          </button>
+          <button
+            className={`av-pb-btn av-pb-play ${isPlaying ? 'playing' : ''}`}
+            onClick={() => setIsPlaying(p => !p)}
+            title={isPlaying ? 'Pause' : 'Play'}
+          >
+            {isPlaying ? <Square size={18} /> : <Play size={18} />}
+          </button>
+          <button className="av-pb-btn" onClick={() => setCurrentFrame(p => Math.min(frames.length - 1, p + 1))} title="Next frame">
+            <ChevronRight size={16} />
+          </button>
+          <span className="av-fullscreen-frame-info">{currentFrame + 1} / {frames.length}</span>
+          <button className="av-pb-btn av-fullscreen-close" onClick={onClose} title="Close (Esc)">
+            <Minimize2 size={14} />
+          </button>
+        </div>
+      </div>
     </div>
   );
 });
@@ -157,10 +220,16 @@ export default function AnimationView({
   // Loop mode state (UI only — actual loop logic is in usePlayback)
   const [loopMode, setLoopMode] = useState<'forever' | 'once' | 'ping-pong'>('forever');
 
+  // Fullscreen preview state
+  const [showFullscreen, setShowFullscreen] = useState(false);
+
   // Frame drag-and-drop
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const [dropPosition, setDropPosition] = useState<'left' | 'right' | null>(null);
+
+  // Timeline zoom
+  const [zoomLevel, setZoomLevel] = useState(1.0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -180,9 +249,21 @@ export default function AnimationView({
     if (activeFrameIndex < frames.length - 1) onSelectFrame(activeFrameIndex + 1);
   }, [activeFrameIndex, frames.length, onSelectFrame]);
 
-  // Timeline ruler: total duration
+  // Mouse wheel: scroll = navigate frames, Ctrl+scroll = zoom
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) {
+      setZoomLevel(prev => Math.max(0.5, Math.min(2.5, prev + (e.deltaY < 0 ? 0.15 : -0.15))));
+    } else {
+      if (e.deltaY > 0 || e.deltaX > 0) goNext();
+      else if (e.deltaY < 0 || e.deltaX < 0) goPrev();
+    }
+  }, [goNext, goPrev]);
+
+  // Timeline ruler: total duration with adaptive step
   const totalDuration = frames.reduce((s, f) => s + f.duration, 0);
-  const rulerMarks = Math.max(1, Math.ceil(totalDuration / 100));
+  const majorStep = totalDuration > 10000 ? 2000 : totalDuration > 5000 ? 1000 : totalDuration > 2000 ? 500 : totalDuration > 500 ? 250 : 100;
+  const minorStep = totalDuration > 5000 ? 500 : totalDuration > 2000 ? 250 : 100;
 
   // Cumulative time per frame for ruler indicator
   const frameTimes = frames.reduce<number[]>((acc, _, i) => {
@@ -239,15 +320,6 @@ export default function AnimationView({
             </select>
           </div>
 
-          <div className="av-field" style={{ marginTop: 'auto' }}>
-            <label className="av-label">Onion Skin</label>
-            <button
-              className={`av-toggle-btn ${onionSkinEnabled ? 'active' : ''}`}
-              onClick={onToggleOnionSkin}
-            >
-              {onionSkinEnabled ? 'On' : 'Off'}
-            </button>
-          </div>
         </div>
 
         {/* Preview + playback */}
@@ -256,7 +328,7 @@ export default function AnimationView({
 
           {/* Playback controls */}
           <div className="av-playback">
-            <button className="av-pb-btn" onClick={() => onSelectFrame(0)} title="First frame" disabled={isPlaying && false}>
+            <button className="av-pb-btn" onClick={() => onSelectFrame(0)} title="First frame">
               <SkipBack size={16} />
             </button>
             <button className="av-pb-btn" onClick={goPrev} title="Previous frame">
@@ -265,7 +337,7 @@ export default function AnimationView({
             <button
               className={`av-pb-btn av-pb-play ${isPlaying ? 'playing' : ''}`}
               onClick={onTogglePlay}
-              title={isPlaying ? 'Stop' : 'Play'}
+              title={isPlaying ? 'Stop' : frames.length <= 1 ? 'Need at least 2 frames' : 'Play'}
               disabled={frames.length <= 1}
             >
               {isPlaying ? <Square size={18} /> : <Play size={18} />}
@@ -283,6 +355,14 @@ export default function AnimationView({
             >
               <RotateCcw size={14} />
             </button>
+            <div className="av-pb-sep" />
+            <button
+              className="av-pb-btn"
+              onClick={() => setShowFullscreen(true)}
+              title="Fullscreen preview"
+            >
+              <Maximize2 size={14} />
+            </button>
           </div>
         </div>
       </div>
@@ -291,7 +371,7 @@ export default function AnimationView({
       <div className="av-timeline-section">
         <div className="av-section-header">
           <span className="av-section-title">Timeline</span>
-          <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
+          <div className="av-section-actions">
             <button className="av-icon-btn" onClick={onAddFrame} title="Add frame" disabled={isPlaying}>
               <Plus size={13} />
             </button>
@@ -305,7 +385,7 @@ export default function AnimationView({
         </div>
 
         {/* Frame strip */}
-        <div className="av-frame-strip" ref={scrollRef}>
+        <div className="av-frame-strip" ref={scrollRef} onWheel={handleWheel} style={{ '--av-zoom': zoomLevel } as React.CSSProperties}>
           {frames.map((frame, i) => (
             <FrameThumb
               key={frame.id}
@@ -316,6 +396,7 @@ export default function AnimationView({
               isDragging={draggedIndex === i}
               dropTarget={dropTargetIndex === i ? dropPosition : null}
               draggable={!isPlaying && frames.length > 1}
+              compact={zoomLevel < 0.7}
               onClick={() => !isPlaying && onSelectFrame(i)}
               onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggedIndex(i); }}
               onDragOver={(e) => {
@@ -354,11 +435,20 @@ export default function AnimationView({
               left: `${(activeStartMs / Math.max(totalDuration, 1)) * 100}%`,
             }}
           />
-          {Array.from({ length: rulerMarks + 1 }, (_, i) => (
-            <div key={i} className="av-ruler-mark" style={{ left: `${(i * 100) / Math.max(rulerMarks, 1)}%` }}>
-              <span>{i * 100}ms</span>
-            </div>
-          ))}
+          {Array.from({ length: Math.ceil(totalDuration / minorStep) + 1 }, (_, i) => {
+            const timeMs = i * minorStep;
+            if (timeMs > totalDuration) return null;
+            const isMajor = timeMs % majorStep === 0;
+            return (
+              <div
+                key={i}
+                className={`av-ruler-mark ${isMajor ? 'major' : ''}`}
+                style={{ left: `${(timeMs / Math.max(totalDuration, 1)) * 100}%` }}
+              >
+                {isMajor && <span>{timeMs >= 1000 ? `${(timeMs / 1000).toFixed(1)}s` : `${timeMs}ms`}</span>}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -421,6 +511,14 @@ export default function AnimationView({
         </div>
       </div>
 
+      {/* ── Fullscreen Preview Popup ── */}
+      {showFullscreen && (
+        <FullscreenPreview
+          frames={frames}
+          gridSize={gridSize}
+          onClose={() => setShowFullscreen(false)}
+        />
+      )}
     </div>
   );
 }

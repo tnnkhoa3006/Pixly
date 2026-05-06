@@ -96,16 +96,14 @@ export default function TabBar({
             >
               {tab.isDirty && <span className="tab-dirty-dot" aria-label="unsaved" />}
               <span className="tab-name">{tab.name}</span>
-              {tabs.length > 1 && (
-                <button
-                  className="tab-close-btn"
-                  onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
-                  title="Close tab"
-                  aria-label="Close tab"
-                >
-                  <X size={11} />
-                </button>
-              )}
+              <button
+                className="tab-close-btn"
+                onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
+                title="Close tab"
+                aria-label="Close tab"
+              >
+                <X size={11} />
+              </button>
             </div>
           );
         })}
@@ -117,7 +115,7 @@ export default function TabBar({
             onClick={() => onSelectView?.('animation')}
             title="Animation editor"
           >
-            <Film size={12} style={{ flexShrink: 0, opacity: 0.8 }} />
+            <Film size={12} />
             <span className="tab-name">Animation</span>
             <button
               className="tab-close-btn"

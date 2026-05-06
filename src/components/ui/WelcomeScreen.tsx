@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { FolderOpen, Film, MoreHorizontal, Play, Grid3X3, Sparkles, Clock, FileImage, Info, ExternalLink } from 'lucide-react';
+import { FolderOpen, Film, MoreHorizontal, Play, Grid3X3, Sparkles, Clock, FileImage, Info, ExternalLink, Paintbrush } from 'lucide-react';
 import { APP_DISPLAY_VERSION, APP_NAME } from '../../constants/appInfo';
 import type { GridSizeType, ProjectData } from '../../types';
 import { getRecentFiles, hasAutoSave, loadAutoSave, type RecentFile } from '../../lib/autoSave';
@@ -112,7 +112,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
             )}
 
             <button className="welcome-sidebar-btn" onClick={() => onNewProject(getGridSize())}>
-              <span className="welcome-sidebar-icon welcome-icon-sprite">🎨</span>
+              <Paintbrush size={14} className="welcome-sidebar-icon" />
               <span className="welcome-sidebar-label">New Sprite</span>
             </button>
 
@@ -194,7 +194,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
 
           <div className="welcome-center-actions">
             <button className="welcome-center-btn" onClick={() => onNewProject(getGridSize())}>
-              <span>🎨</span> New Sprite
+              <Paintbrush size={16} /> New Sprite
             </button>
             <button className="welcome-center-btn welcome-center-btn-secondary" onClick={() => onNewAnimation(getGridSize())}>
               <Film size={16} /> New Animation
@@ -252,7 +252,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
 
       <div className="welcome-footer">
         <span>{APP_DISPLAY_VERSION} · Built with ❤ and Tauri</span>
-        <span className="welcome-footer-hint">Press Enter to create · ⌘O to open</span>
+        <span className="welcome-footer-hint">Press Enter to create · Ctrl+O to open</span>
       </div>
     </div>
   );

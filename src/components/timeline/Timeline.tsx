@@ -1,8 +1,8 @@
 import { useRef, useEffect, useCallback, memo, useState } from 'react';
 import {
-  Plus, Copy, Trash2, Play, Square,
+  Plus, Copy, Trash2, Play, Square, SkipBack,
   ChevronLeft, ChevronRight, Layers as OnionIcon,
-  GripHorizontal, Minimize2, X, PanelBottomOpen
+  GripHorizontal, Minimize2, X, PanelBottomOpen, Clock
 } from 'lucide-react';
 import type { Frame } from '../../types';
 
@@ -28,7 +28,7 @@ interface TimelineProps {
 
 // ---------- Thumbnail renderer ----------
 
-const THUMB_SIZE = 64;
+const THUMB_SIZE = 40;
 
 function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, gridSize: number) {
   const ctx = canvas.getContext('2d');
@@ -42,13 +42,19 @@ function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, gridSize: numb
 
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.imageSmoothingEnabled = false;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, THUMB_SIZE, THUMB_SIZE);
+
+  // Dark checkerboard bg
+  const sq = Math.max(2, Math.round(THUMB_SIZE / gridSize / 2));
+  for (let row = 0; row < Math.ceil(THUMB_SIZE / sq); row++) {
+    for (let col = 0; col < Math.ceil(THUMB_SIZE / sq); col++) {
+      ctx.fillStyle = (row + col) % 2 === 0 ? '#2a2a3e' : '#22223a';
+      ctx.fillRect(col * sq, row * sq, sq, sq);
+    }
+  }
 
   const ps = THUMB_SIZE / gridSize;
 
-  for (let i = 0; i < frame.layers.length; i++) {
-    const layer = frame.layers[i];
+  for (const layer of frame.layers) {
     if (!layer.visible) continue;
     ctx.save();
     ctx.translate(layer.transform.x * ps, layer.transform.y * ps);
@@ -78,10 +84,10 @@ function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, gridSize: numb
   }
 }
 
-// ---------- Single frame thumb ----------
+// ---------- Keyframe marker ----------
 
-const FrameThumb = memo(({
-  frame, index, isActive, gridSize, isDragging, dropTarget, draggable,
+const KeyframeMarker = memo(({
+  frame, index, isActive, gridSize, isDragging, dropTarget, draggable, compact,
   onClick, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd
 }: {
   frame: Frame;
@@ -91,6 +97,7 @@ const FrameThumb = memo(({
   isDragging: boolean;
   dropTarget: 'left' | 'right' | null;
   draggable: boolean;
+  compact: boolean;
   onClick: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
@@ -101,12 +108,12 @@ const FrameThumb = memo(({
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    if (canvasRef.current) renderThumbnail(canvasRef.current, frame, gridSize);
-  }, [frame, gridSize]);
+    if (!compact && canvasRef.current) renderThumbnail(canvasRef.current, frame, gridSize);
+  }, [frame, gridSize, compact]);
 
   return (
     <div
-      className={`frame-thumb ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${dropTarget === 'left' ? 'drop-target-left' : ''} ${dropTarget === 'right' ? 'drop-target-right' : ''}`}
+      className={`tl-keyframe ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${compact ? 'compact' : ''} ${dropTarget === 'left' ? 'drop-target-left' : ''} ${dropTarget === 'right' ? 'drop-target-right' : ''}`}
       onClick={onClick}
       draggable={draggable}
       onDragStart={onDragStart}
@@ -115,9 +122,8 @@ const FrameThumb = memo(({
       onDrop={onDrop}
       onDragEnd={onDragEnd}
     >
-      <canvas ref={canvasRef} />
-      <div className="frame-thumb-label">{index + 1}</div>
-      <div className="frame-thumb-duration">{frame.duration}ms</div>
+      {!compact && <canvas ref={canvasRef} className="tl-keyframe-thumb" />}
+      <span className="tl-keyframe-label">{index + 1}</span>
     </div>
   );
 });
@@ -142,13 +148,13 @@ export default function Timeline({
   onPinToTab,
 }: TimelineProps) {
   // Docked height (when not floating)
-  const [dockedHeight, setDockedHeight] = useState(130);
+  const [dockedHeight, setDockedHeight] = useState(200);
   const isResizingDocked = useRef(false);
 
   // Floating state
   const [isFloating, setIsFloating] = useState(false);
   const [floatPos, setFloatPos] = useState({ x: 80, y: 120 });
-  const [floatSize, setFloatSize] = useState({ w: 680, h: 220 });
+  const [floatSize, setFloatSize] = useState({ w: 700, h: 280 });
 
   // Drag-to-float: track pointer on the grip handle
   const isDraggingFloat = useRef(false);
@@ -162,18 +168,31 @@ export default function Timeline({
   const [isNearTabBar, setIsNearTabBar] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const rulerRef = useRef<HTMLDivElement>(null);
+
+  // Zoom level for keyframe markers (1.0 = default, range 0.5 – 2.5)
+  const [zoomLevel, setZoomLevel] = useState(1.0);
 
   // Frame drag-and-drop
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const [dropPosition, setDropPosition] = useState<'left' | 'right' | null>(null);
 
+  // Cumulative times for ruler positioning
+  const frameTimes = frames.reduce<number[]>((acc, _, i) => {
+    acc.push(i === 0 ? 0 : acc[i - 1] + frames[i - 1].duration);
+    return acc;
+  }, []);
+  const totalDuration = frameTimes.length > 0
+    ? frameTimes[frameTimes.length - 1] + frames[frames.length - 1].duration
+    : 0;
+
   // ── Docked resize ──────────────────────────────────────────
   useEffect(() => {
     const handleMove = (e: PointerEvent) => {
       if (isResizingDocked.current) {
-        const newH = window.innerHeight - e.clientY - 36; // 36 = bottom-bar height
-        setDockedHeight(Math.max(80, Math.min(newH, 500)));
+        const newH = window.innerHeight - e.clientY - 36;
+        setDockedHeight(Math.max(120, Math.min(newH, 500)));
       }
     };
     const handleUp = () => {
@@ -197,8 +216,6 @@ export default function Timeline({
         const newX = Math.max(0, e.clientX - dragOffset.current.x);
         const newY = Math.max(0, e.clientY - dragOffset.current.y);
         setFloatPos({ x: newX, y: newY });
-
-        // Detect if near the tab bar (top ~70px of window)
         setIsNearTabBar(e.clientY < 80);
       }
       if (isResizingFloat.current) {
@@ -212,7 +229,6 @@ export default function Timeline({
     };
     const handleUp = (e: PointerEvent) => {
       if (isDraggingFloat.current) {
-        // If dropped near tab bar → pin to tab
         if (e.clientY < 80 && onPinToTab) {
           onPinToTab();
           setIsFloating(false);
@@ -277,8 +293,8 @@ export default function Timeline({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const thumb = el.children[activeFrameIndex] as HTMLElement | undefined;
-    if (thumb) thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    const marker = el.querySelector('.tl-keyframe.active') as HTMLElement | undefined;
+    if (marker) marker.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
   }, [activeFrameIndex]);
 
   const goPrev = useCallback(() => {
@@ -289,12 +305,46 @@ export default function Timeline({
     if (activeFrameIndex < frames.length - 1) onSelectFrame(activeFrameIndex + 1);
   }, [activeFrameIndex, frames.length, onSelectFrame]);
 
+  // ── Ruler click to seek ─────────────────────────────────
+  const handleRulerClick = useCallback((e: React.MouseEvent) => {
+    const ruler = rulerRef.current;
+    if (!ruler || totalDuration === 0) return;
+    const rect = ruler.getBoundingClientRect();
+    const ratio = (e.clientX - rect.left) / rect.width;
+    const clickTime = ratio * totalDuration;
+    // Find the closest frame
+    let closest = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < frameTimes.length; i++) {
+      const dist = Math.abs(frameTimes[i] - clickTime);
+      if (dist < minDist) { minDist = dist; closest = i; }
+    }
+    onSelectFrame(closest);
+  }, [totalDuration, frameTimes, onSelectFrame]);
+
+  // ── Ruler marks ─────────────────────────────────────────
+  const RULER_STEP = totalDuration > 10000 ? 2000 : totalDuration > 5000 ? 1000 : totalDuration > 2000 ? 500 : totalDuration > 500 ? 250 : 100;
+  const RULER_MINOR = totalDuration > 5000 ? 500 : totalDuration > 2000 ? 250 : 100;
+  const rulerMarkCount = Math.ceil(totalDuration / RULER_MINOR);
+
+  // ── Wheel handler: navigate frames / Ctrl+wheel to zoom ──
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    if (e.ctrlKey || e.metaKey) {
+      // Zoom: Ctrl + wheel
+      setZoomLevel(prev => Math.max(0.5, Math.min(2.5, prev + (e.deltaY < 0 ? 0.15 : -0.15))));
+    } else {
+      // Navigate frames: wheel left/right or up/down
+      if (e.deltaY > 0 || e.deltaX > 0) goNext();
+      else if (e.deltaY < 0 || e.deltaX < 0) goPrev();
+    }
+  }, [goNext, goPrev]);
+
   // ── Shared inner content ───────────────────────────────────
   const innerContent = (
-    <>
-      {/* Controls bar */}
-      <div className="timeline-controls">
-        {/* Grip handle — always visible, drag to float */}
+    <div className="tl-inner" onWheel={handleWheel}>
+      {/* Top toolbar */}
+      <div className="tl-toolbar">
         <div
           className="tl-grip"
           onPointerDown={handleGripPointerDown}
@@ -305,19 +355,20 @@ export default function Timeline({
 
         <div className="tl-sep" />
 
+        {/* Playback controls */}
+        <button className="tl-btn" onClick={() => onSelectFrame(0)} title="First Frame" disabled={isPlaying}>
+          <SkipBack size={13} />
+        </button>
+        <button className="tl-btn" onClick={goPrev} title="Previous Frame" disabled={isPlaying}>
+          <ChevronLeft size={14} />
+        </button>
         <button
           className={`tl-btn ${isPlaying ? 'playing' : ''}`}
           onClick={onTogglePlay}
-          title={isPlaying ? 'Stop' : 'Play'}
+          title={isPlaying ? 'Stop' : frames.length <= 1 ? 'Need at least 2 frames' : 'Play'}
           disabled={frames.length <= 1}
         >
           {isPlaying ? <Square size={14} /> : <Play size={14} />}
-        </button>
-
-        <div className="tl-sep" />
-
-        <button className="tl-btn" onClick={goPrev} title="Previous Frame" disabled={isPlaying}>
-          <ChevronLeft size={14} />
         </button>
         <button className="tl-btn" onClick={goNext} title="Next Frame" disabled={isPlaying}>
           <ChevronRight size={14} />
@@ -325,54 +376,47 @@ export default function Timeline({
 
         <div className="tl-sep" />
 
+        {/* Frame info */}
+        <div className="tl-info">
+          <span className="tl-frame-count">{activeFrameIndex + 1} / {frames.length}</span>
+        </div>
+
+        <div className="tl-sep" />
+
+        {/* Actions */}
         <button className="tl-btn" onClick={onAddFrame} title="Add Frame" disabled={isPlaying}>
           <Plus size={14} />
         </button>
         <button className="tl-btn" onClick={onDuplicateFrame} title="Duplicate Frame" disabled={isPlaying}>
           <Copy size={14} />
         </button>
-        <button
-          className="tl-btn"
-          onClick={onDeleteFrame}
-          title="Delete Frame"
-          disabled={isPlaying || frames.length <= 1}
-        >
+        <button className="tl-btn" onClick={onDeleteFrame} title="Delete Frame" disabled={isPlaying || frames.length <= 1}>
           <Trash2 size={14} />
         </button>
 
         <div className="tl-sep" />
 
-        <button
-          className={`tl-btn ${onionSkinEnabled ? 'active' : ''}`}
-          onClick={onToggleOnionSkin}
-          title="Onion Skin"
-        >
+        <button className={`tl-btn ${onionSkinEnabled ? 'active' : ''}`} onClick={onToggleOnionSkin} title="Onion Skin">
           <OnionIcon size={14} />
         </button>
 
-        <div className="tl-info">
-          <span className="tl-frame-count">{activeFrameIndex + 1}/{frames.length}</span>
-        </div>
-
         {/* Duration control */}
-        <div className="tl-duration-control" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <label title="Frame duration (ms)">
-            <span>⏱</span>
-            <input
-              type="number"
-              min={16}
-              max={2000}
-              step={10}
-              value={frames[activeFrameIndex]?.duration ?? 100}
-              onChange={(e) => onSetDuration(activeFrameIndex, Math.max(16, Number(e.target.value)))}
-              disabled={isPlaying}
-              className="tl-duration-input"
-            />
-            <span style={{ opacity: 0.5 }}>ms</span>
-          </label>
+        <div className="tl-duration-control">
+          <Clock size={11} style={{ opacity: 0.5 }} />
+          <input
+            type="number"
+            min={16}
+            max={2000}
+            step={10}
+            value={frames[activeFrameIndex]?.duration ?? 100}
+            onChange={(e) => onSetDuration(activeFrameIndex, Math.max(16, Number(e.target.value)))}
+            disabled={isPlaying}
+            className="tl-duration-input"
+            title="Frame duration (ms)"
+          />
+          <span className="tl-duration-unit">ms</span>
           <button
-            className="tl-btn"
-            style={{ width: 'auto', padding: '0 8px', fontSize: '11px', whiteSpace: 'nowrap' }}
+            className="tl-btn tl-apply-all-btn"
             onClick={() => onSetDurationAll(frames[activeFrameIndex]?.duration ?? 100)}
             disabled={isPlaying}
             title="Apply to all frames"
@@ -392,10 +436,38 @@ export default function Timeline({
         )}
       </div>
 
-      {/* Frame strip */}
-      <div className="timeline-scroll" ref={scrollRef}>
+      {/* Time ruler */}
+      <div className="tl-ruler" ref={rulerRef} onClick={handleRulerClick}>
+        {/* Playback head */}
+        <div
+          className="tl-playback-head"
+          style={{
+            left: totalDuration > 0
+              ? `${((frameTimes[activeFrameIndex] ?? 0) / totalDuration) * 100}%`
+              : '0%',
+          }}
+        />
+        {/* Ruler marks */}
+        {Array.from({ length: rulerMarkCount + 1 }, (_, i) => {
+          const timeMs = i * RULER_MINOR;
+          if (timeMs > totalDuration) return null;
+          const isMajor = timeMs % RULER_STEP === 0;
+          return (
+            <div
+              key={i}
+              className={`tl-ruler-mark ${isMajor ? 'major' : ''}`}
+              style={{ left: `${(timeMs / Math.max(totalDuration, 1)) * 100}%` }}
+            >
+              {isMajor && <span>{timeMs >= 1000 ? `${(timeMs / 1000).toFixed(1)}s` : `${timeMs}ms`}</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Keyframe track */}
+      <div className="tl-track" ref={scrollRef} style={{ '--tl-zoom': zoomLevel } as React.CSSProperties}>
         {frames.map((frame, i) => (
-          <FrameThumb
+          <KeyframeMarker
             key={frame.id}
             frame={frame}
             index={i}
@@ -404,6 +476,7 @@ export default function Timeline({
             isDragging={draggedIndex === i}
             dropTarget={dropTargetIndex === i ? dropPosition : null}
             draggable={!isPlaying && frames.length > 1}
+            compact={zoomLevel < 0.7}
             onClick={() => !isPlaying && onSelectFrame(i)}
             onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggedIndex(i); }}
             onDragOver={(e) => {
@@ -430,8 +503,12 @@ export default function Timeline({
             onDragEnd={() => { setDraggedIndex(null); setDropTargetIndex(null); setDropPosition(null); }}
           />
         ))}
+        {/* Add frame button at end */}
+        <button className="tl-add-frame-btn" onClick={onAddFrame} disabled={isPlaying} title="Add frame">
+          <Plus size={14} />
+        </button>
       </div>
-    </>
+    </div>
   );
 
   // ── Floating panel ─────────────────────────────────────────
@@ -459,48 +536,33 @@ export default function Timeline({
         >
           <GripHorizontal size={12} style={{ opacity: 0.5 }} />
           <span>Animation</span>
-          {/* Pin to tab button */}
           {onPinToTab && (
             <button
-              className="tl-btn"
-              style={{ marginLeft: 8, width: 22, height: 22, flexShrink: 0 }}
+              className="tl-btn tl-pin-btn"
               onClick={() => { onPinToTab(); setIsFloating(false); }}
               title="Pin as tab"
             >
               <PanelBottomOpen size={12} />
             </button>
           )}
-          <button
-            className="tl-btn"
-            style={{ marginLeft: 'auto', width: 20, height: 20 }}
-            onClick={handleDock}
-            title="Dock to bottom"
-          >
+          <button className="tl-btn tl-dock-btn" onClick={handleDock} title="Dock to bottom">
             <Minimize2 size={12} />
           </button>
-          <button
-            className="tl-btn"
-            style={{ width: 20, height: 20 }}
-            onClick={handleDock}
-            title="Close floating panel"
-          >
+          <button className="tl-btn" onClick={handleDock} title="Close floating panel">
             <X size={12} />
           </button>
         </div>
 
-        {/* Drop-to-tab hint overlay */}
         {isNearTabBar && (
           <div className="timeline-float-pin-hint">
             ↑ Release to pin as tab
           </div>
         )}
 
-        {/* Content */}
         <div className="timeline-float-body">
           {innerContent}
         </div>
 
-        {/* Resize handle — bottom-right corner */}
         <div
           className="timeline-float-resize"
           onPointerDown={(e) => {
@@ -517,7 +579,6 @@ export default function Timeline({
   // ── Docked panel ───────────────────────────────────────────
   return (
     <div className="timeline" style={{ height: `${dockedHeight}px`, position: 'relative' }}>
-      {/* Vertical resize handle */}
       <div
         className="timeline-resizer"
         onPointerDown={(e) => {

@@ -6,11 +6,13 @@ import AnimationView from './components/animation/AnimationView';
 import WelcomeScreen from './components/ui/WelcomeScreen';
 import TabBar from './components/ui/TabBar';
 import NewProjectDialog from './components/ui/NewProjectDialog';
+import SaveConfirmDialog from './components/ui/SaveConfirmDialog';
 import { usePlayback } from './hooks/usePlayback';
 import { exportGif } from './lib/gifExport';
 import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './lib/drawing';
 import { generateId, createEmptyGrid, cloneFrame, shallowCloneFrame, createDefaultFrame, createDefaultTransform, bakeLayerTransform } from './lib/frameHelpers';
 import { saveProjectAs, saveProjectToPath, openProjectFile, deserializeProject } from './lib/projectFile';
+import { openImageFile, imageBlobToGrid } from './lib/imageImport';
 import { autoSaveProject, addRecentFile } from './lib/autoSave';
 import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData, SelectionState, TabState, Frame } from './types';
 import { MenuBar } from './components/menu/MenuBar';
@@ -350,20 +352,14 @@ export default function App() {
   }, [activeTabId]);
 
   // Close a tab
-  const closeTab = useCallback((tabId: string) => {
+  const performCloseTab = useCallback((tabId: string) => {
     setTabs(prev => {
-      const tab = prev.find(t => t.id === tabId);
-      if (tab?.isDirty && !window.confirm(`"${tab.name}" has unsaved changes. Close anyway?`)) {
-        return prev;
-      }
       const next = prev.filter(t => t.id !== tabId);
       if (next.length === 0) {
-        // No tabs left — show welcome
         setShowWelcome(true);
         return next;
       }
       if (tabId === activeTabId) {
-        // Switch to adjacent tab
         const idx = prev.findIndex(t => t.id === tabId);
         const target = next[Math.min(idx, next.length - 1)];
         setGridSize(target.gridSize);
@@ -388,6 +384,15 @@ export default function App() {
     });
   }, [activeTabId]);
 
+  const closeTab = useCallback((tabId: string) => {
+    const tab = tabs.find(t => t.id === tabId);
+    if (tab?.isDirty) {
+      setSaveConfirmTabId(tabId);
+    } else {
+      performCloseTab(tabId);
+    }
+  }, [tabs, performCloseTab]);
+
   // Sync live state changes back to the active tab slot (debounced via useEffect below)
   // (reserved for future use)
   const [showGrid, setShowGrid] = useState(false);
@@ -399,6 +404,8 @@ export default function App() {
   const [activeView, setActiveView] = useState<'canvas' | 'animation'>('canvas');
   // New project dialog (shown when user clicks New Project while tabs are open)
   const [showNewProjectDialog, setShowNewProjectDialog] = useState(false);
+  // Save confirm dialog (shown when closing a dirty tab)
+  const [saveConfirmTabId, setSaveConfirmTabId] = useState<string | null>(null);
   const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [undoStack, setUndoStack] = useState<AnimationState[]>([]);
   const [redoStack, setRedoStack] = useState<AnimationState[]>([]);
@@ -464,6 +471,7 @@ export default function App() {
   const hoverOverlayRef = useRef<HTMLDivElement>(null);
   const hoverCanvasRef = useRef<HTMLCanvasElement>(null);
   const coordsDisplayRef = useRef<HTMLSpanElement>(null);
+  const handleImportImageRef = useRef<(() => void) | null>(null);
 
   const panRef = useRef({ x: 0, y: 0 });
   const pixelSizeRef = useRef(pixelSize);
@@ -981,6 +989,11 @@ export default function App() {
         handleOpenFile();
         return;
       }
+      if ((e.ctrlKey || e.metaKey) && key === 'i') {
+        e.preventDefault();
+        handleImportImageRef.current?.();
+        return;
+      }
 
       if (!isPlaying) {
         if (key === 'b') activateTool('brush');
@@ -1031,7 +1044,7 @@ export default function App() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [activateTool, handleRedo, handleUndo, handleSave, handleSaveAs, handleOpenFile, isPlaying]);
+  }, [activateTool, handleRedo, handleUndo, handleSave, handleSaveAs, handleOpenFile, handleImportImageRef, isPlaying]);
 
   // --- Drawing logic ---
   const getPointerPosition = (e: React.PointerEvent) => {
@@ -2163,6 +2176,38 @@ export default function App() {
     });
   };
 
+  const handleImportImage = async () => {
+    const result = await openImageFile();
+    if (!result) return;
+    try {
+      const grid = await imageBlobToGrid(result.blob, gridSize);
+      const layerName = result.name.replace(/\.[^.]+$/, '') || 'Imported';
+      pushUndoSnapshot(animState);
+      setAnimState(prev => {
+        const nextLayers = [...prev.frames[prev.activeFrameIndex].layers, {
+          id: generateId(),
+          name: layerName,
+          visible: true,
+          opacity: 1,
+          grid,
+          transform: createDefaultTransform()
+        }];
+        const frame = { ...prev.frames[prev.activeFrameIndex], layers: nextLayers };
+        const nextFrames = [...prev.frames];
+        nextFrames[prev.activeFrameIndex] = frame;
+        return {
+          ...prev,
+          frames: nextFrames,
+          activeLayerId: nextLayers[nextLayers.length - 1].id,
+          selectedLayerIds: [nextLayers[nextLayers.length - 1].id]
+        };
+      });
+    } catch (err) {
+      alert(`Failed to import image: ${(err as Error).message}`);
+    }
+  };
+  handleImportImageRef.current = handleImportImage;
+
   const deleteLayer = (id: string) => {
     if (layers.length <= 1) return;
     pushUndoSnapshot(animState);
@@ -2277,6 +2322,7 @@ export default function App() {
       items: [
         { label: 'New Project', shortcut: 'Ctrl+N', action: 'newFile' },
         { label: 'Open…', shortcut: 'Ctrl+O', action: 'openFile' },
+        { label: 'Import Image…', shortcut: 'Ctrl+I', action: 'importImage' },
         { type: 'separator' },
         { label: 'Save', shortcut: 'Ctrl+S', action: 'save' },
         { label: 'Save As…', shortcut: 'Ctrl+Shift+S', action: 'saveAs' },
@@ -2333,6 +2379,7 @@ export default function App() {
   const actions: ActionMap = {
     newFile: () => setShowNewProjectDialog(true),
     openFile: () => handleOpenFile(),
+    importImage: () => handleImportImage(),
     save: () => handleSave(),
     saveAs: () => handleSaveAs(),
     exportGif: handleExportGif,
@@ -2526,8 +2573,8 @@ export default function App() {
 
 
 
-            <div className="brush-size-container" style={{ width: '100%', padding: '0 12px', display: 'flex', flexDirection: 'column', gap: '6px', boxSizing: 'border-box' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)', userSelect: 'none' }}>
+            <div className="brush-size-container brush-size-control">
+              <div className="brush-size-header">
                 <span>Size</span>
                 <span>{brushSize}px</span>
               </div>
@@ -2537,7 +2584,7 @@ export default function App() {
                 max="24"
                 value={brushSize}
                 onChange={(e) => setBrushSize(parseInt(e.target.value, 10))}
-                style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--accent-light)' }}
+                className="brush-size-slider"
               />
             </div>
 
@@ -2794,22 +2841,22 @@ export default function App() {
             <span className="current-color-code">{currentColor.toUpperCase()}</span>
             {pickerStatusText && <span className="current-color-status">{pickerStatusText}</span>}
           </div>
-          <div style={{ display: 'flex', gap: '4px', marginLeft: '8px' }}>
+          <div className="bottom-bar-palette">
             {DEFAULT_PALETTE.map(color => (
-              <div key={color} className="palette-swatch" style={{ backgroundColor: color }} onClick={() => { setCurrentColor(color); activateTool('brush'); }} />
+              <div key={color} className="palette-swatch" style={{ backgroundColor: color }} onClick={() => { setCurrentColor(color); activateTool('brush'); }} title={color.toUpperCase()} />
             ))}
           </div>
         </div>
         <div className="bottom-bar-divider" />
-        <div className="bottom-bar-section" style={{ minWidth: '100px' }}>
-          <span ref={coordsDisplayRef}>X: -, Y: -</span>
+        <div className="bottom-bar-section bottom-bar-coords">
+          <span ref={coordsDisplayRef} title="Cursor coordinates">X: -, Y: -</span>
         </div>
         <div className="bottom-bar-divider" />
         <div className="bottom-bar-section">
-          <button onClick={() => setShowGrid(!showGrid)} style={{ background: 'none', border: 'none', color: showGrid ? '#4f46e5' : '#aaa', cursor: 'pointer', display: 'flex', alignItems: 'center' }} title="Toggle Grid">
+          <button onClick={() => setShowGrid(!showGrid)} className={`grid-toggle-btn${showGrid ? ' active' : ''}`} title="Toggle Grid (G)">
             <Grid3X3 size={16} />
           </button>
-          <span style={{ color: '#999', fontSize: '12px' }}>{gridSize}×{gridSize}</span>
+          <span className="grid-size-label" title="Canvas size">{gridSize}×{gridSize}</span>
         </div>
         <div className="bottom-bar-divider" />
         <div className="bottom-bar-section">
@@ -2876,6 +2923,31 @@ export default function App() {
           onCancel={() => setShowNewProjectDialog(false)}
         />
       )}
+
+      {/* Save Confirm Dialog */}
+      {saveConfirmTabId && (() => {
+        const tab = tabs.find(t => t.id === saveConfirmTabId);
+        if (!tab) return null;
+        return (
+          <SaveConfirmDialog
+            fileName={tab.name}
+            onSave={async () => {
+              const tabIdToClose = saveConfirmTabId;
+              setSaveConfirmTabId(null);
+              if (tabIdToClose === activeTabId) {
+                await handleSave();
+              }
+              performCloseTab(tabIdToClose);
+            }}
+            onDiscard={() => {
+              const tabIdToClose = saveConfirmTabId;
+              setSaveConfirmTabId(null);
+              performCloseTab(tabIdToClose);
+            }}
+            onCancel={() => setSaveConfirmTabId(null)}
+          />
+        );
+      })()}
 
       {/* Update Notification Toast */}
       {updateAvailable && (
