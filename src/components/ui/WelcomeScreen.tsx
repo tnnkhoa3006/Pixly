@@ -70,7 +70,6 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
   };
 
   const handleNewProject = useCallback(() => onNewProject(getGridSize()), [isCustom, customSize, selectedPreset]);
-  const handleNewAnimation = useCallback(() => onNewAnimation(getGridSize()), [isCustom, customSize, selectedPreset]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
