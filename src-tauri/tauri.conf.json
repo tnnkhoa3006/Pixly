@@ -38,7 +38,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVBNUE0RUJFNjQwOTE0ODkKUldTSkZBbGt2azVhV3F6MFh1UnYzdCtKaWdLcnZPaUR5TWZLcXYyMTZiOUgxclNYWExuSjhVamoK",
       "endpoints": [
-        "https://github.com/tnnkhoa3006/Pixly/releases/latest/download/latest.json"
+        "https://pixly-lovat.vercel.app/api/updater"
       ],
       "windows": {
         "installMode": "passive"
