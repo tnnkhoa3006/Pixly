@@ -7,6 +7,9 @@ import WelcomeScreen from './components/ui/WelcomeScreen';
 import TabBar from './components/ui/TabBar';
 import NewProjectDialog from './components/ui/NewProjectDialog';
 import SaveConfirmDialog from './components/ui/SaveConfirmDialog';
+import OnboardingGuide from './components/ui/OnboardingGuide';
+import LoadingScreen from './components/ui/LoadingScreen';
+import SplashScreen from './components/ui/SplashScreen';
 import { usePlayback } from './hooks/usePlayback';
 import { exportGif } from './lib/gifExport';
 import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './lib/drawing';
@@ -230,6 +233,9 @@ function tabFromProjectData(data: ProjectData, filePath: string): TabState {
 
 export default function App() {
   const [showWelcome, setShowWelcome] = useState(true);
+  const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem('pixly_onboarding_done') !== '1');
+  const [showLoading, setShowLoading] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
   const [gridSize, setGridSize] = useState<GridSizeType>(16);
   const [pixelSize, setPixelSize] = useState(32);
 
@@ -477,6 +483,7 @@ export default function App() {
   const pixelSizeRef = useRef(pixelSize);
   pixelSizeRef.current = pixelSize; // Keep in sync every render
   const hasCentered = useRef(false);
+  const pendingTransition = useRef<(() => void) | null>(null);
   const isPanning = useRef(false);
   const lastPanPoint = useRef<{ x: number, y: number } | null>(null);
   const isSpaceDown = useRef(false);
@@ -2435,27 +2442,33 @@ export default function App() {
     about: () => window.alert(`${APP_NAME} - Professional Pixel Art Editor\n${APP_DISPLAY_VERSION} · Built with React & Tauri`)
   };
 
+  // --- Splash Screen (app startup) ---
+  if (showSplash) {
+    return (
+      <SplashScreen onComplete={() => setShowSplash(false)} />
+    );
+  }
+
   // --- Welcome Screen ---
   if (showWelcome) {
+    const handleTransition = (action: () => void) => {
+      pendingTransition.current = action;
+      setShowWelcome(false);
+      setShowLoading(true);
+    };
+
     return (
       <div className="app-root-container">
         <WelcomeScreen
-          onNewProject={(size) => {
-            addNewTab(size);
-            setShowWelcome(false);
-          }}
-          onNewAnimation={(size) => {
+          onNewProject={(size) => handleTransition(() => addNewTab(size))}
+          onNewAnimation={(size) => handleTransition(() => {
             addNewTab(size);
             setAnimationTabPinned(true);
             setActiveView('animation');
             setAnimationMode(true);
-            setShowWelcome(false);
-          }}
-          onLoadProject={(data, filePath) => {
-            loadProjectData(data, filePath);
-            setShowWelcome(false);
-          }}
-          onContinue={(data) => {
+          })}
+          onLoadProject={(data, filePath) => handleTransition(() => loadProjectData(data, filePath))}
+          onContinue={(data) => handleTransition(() => {
             const newTab = createNewTab(data.canvas.width, 'Autosave');
             const loaded: TabState = {
               ...newTab,
@@ -2475,8 +2488,7 @@ export default function App() {
             setCurrentFilePath(null);
             setIsDirty(false);
             hasCentered.current = false;
-            setShowWelcome(false);
-          }}
+          })}
         />
       </div>
     );
@@ -2973,6 +2985,20 @@ export default function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Onboarding Guide */}
+      {showOnboarding && (
+        <OnboardingGuide onComplete={() => setShowOnboarding(false)} />
+      )}
+
+      {/* Loading Screen */}
+      {showLoading && (
+        <LoadingScreen onComplete={() => {
+          setShowLoading(false);
+          pendingTransition.current?.();
+          pendingTransition.current = null;
+        }} />
       )}
 
     </div>
