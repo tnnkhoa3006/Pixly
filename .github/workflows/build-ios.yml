@@ -26,7 +26,7 @@ jobs:
       - name: Install iOS Rust targets
         run: |
           rustup target add aarch64-apple-ios
-          rustup target add x86_64-apple-ios
+          rustup target add aarch64-apple-ios-sim
 
       - name: Install dependencies
         run: npm install
@@ -41,7 +41,7 @@ jobs:
         run: cargo tauri ios init
 
       - name: Build iOS (Simulator)
-        run: cargo tauri ios build --target aarch64-apple-ios-sim
+        run: cargo tauri ios build --target aarch64-sim
 
       - name: Upload iOS build
         uses: actions/upload-artifact@v4
