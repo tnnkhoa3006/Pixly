@@ -8,6 +8,8 @@ on:
 jobs:
   build-ios-simulator:
     runs-on: macos-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,9 +45,28 @@ jobs:
       - name: Build iOS (Simulator)
         run: cargo tauri ios build --target aarch64-sim
 
-      - name: Upload iOS build
-        uses: actions/upload-artifact@v4
+      - name: Package iOS build
+        run: |
+          APP_PATH=$(find src-tauri/gen/apple/build -name "pixly.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: pixly.app not found"
+            find src-tauri/gen/apple/build -name "*.app" -type d
+            exit 1
+          fi
+          cd "$(dirname "$APP_PATH")"
+          zip -r "$GITHUB_WORKSPACE/pixly-ios-sim.zip" "$(basename "$APP_PATH")"
+
+      - name: Get version
+        id: version
+        run: echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: pixly-ios-simulator
-          path: src-tauri/gen/apple/build/**/*
-          retention-days: 7
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Pixly ${{ steps.version.outputs.tag }}
+          files: pixly-ios-sim.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
