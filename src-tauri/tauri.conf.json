@@ -1,6 +1,6 @@
 {
   "productName": "Pixly",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "identifier": "com.pixly.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -37,7 +37,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVBNUE0RUJFNjQwOTE0ODkKUldTSkZBbGt2azVhV3F6MFh1UnYzdCtKaWdLcnZPaUR5TWZLcXYyMTZiOUgxclNYWExuSjhVamoK",
       "endpoints": [
-        "https://pixly-lovat.vercel.app/api/updater"
+        "https://pixly-lovat.vercel.app/api/updater/latest.json"
       ],
       "windows": {
         "installMode": "passive"

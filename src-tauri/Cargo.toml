@@ -1,6 +1,6 @@
 [package]
 name = "pixly"
-version = "0.1.6"
+version = "0.1.12"
 description = "Pixly - Pixel Art Editor"
 authors = ["you"]
 edition = "2021"
