@@ -1,0 +1,51 @@
+name: Build iOS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-ios-simulator:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install iOS Rust targets
+        run: |
+          rustup target add aarch64-apple-ios
+          rustup target add x86_64-apple-ios
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2"
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Init iOS project
+        run: cargo tauri ios init
+
+      - name: Build iOS (Simulator)
+        run: cargo tauri ios build --target aarch64-apple-ios-sim
+
+      - name: Upload iOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixly-ios-simulator
+          path: src-tauri/gen/apple/build/**/*
+          retention-days: 7
