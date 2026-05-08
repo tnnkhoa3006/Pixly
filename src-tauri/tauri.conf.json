@@ -1,6 +1,6 @@
 {
   "productName": "Pixly",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "identifier": "com.pixly.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -11,10 +11,29 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Pixly",
+        "url": "index.html",
         "width": 1200,
         "height": 800,
-        "resizable": true
+        "resizable": true,
+        "center": true,
+        "visible": false,
+        "focus": false
+      },
+      {
+        "label": "splash",
+        "title": "Pixly",
+        "url": "index.html#splash",
+        "width": 720,
+        "height": 420,
+        "resizable": false,
+        "decorations": false,
+        "center": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": true,
+        "backgroundColor": "#10101a"
       }
     ],
     "security": {

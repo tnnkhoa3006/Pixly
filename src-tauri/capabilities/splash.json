@@ -1,0 +1,6 @@
+{
+  "identifier": "splash-capability",
+  "description": "Capability for the startup splash window",
+  "windows": ["splash"],
+  "permissions": ["core:default"]
+}

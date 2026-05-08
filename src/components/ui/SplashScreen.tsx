@@ -2,37 +2,57 @@ import { useState, useEffect, useRef } from 'react';
 
 interface SplashScreenProps {
   onComplete: () => void;
+  standalone?: boolean;
 }
 
-export default function SplashScreen({ onComplete }: SplashScreenProps) {
+export default function SplashScreen({ onComplete, standalone = false }: SplashScreenProps) {
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState<'loading' | 'done'>('loading');
   const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
+  const hasCompletedRef = useRef(false);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     const duration = 2500;
     const start = performance.now();
+    let frameId = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
 
     const tick = (now: number) => {
+      if (cancelled) return;
+
       const elapsed = now - start;
       const pct = Math.min(1, elapsed / duration);
       const eased = 1 - Math.pow(1 - pct, 3);
       setProgress(Math.round(eased * 100));
 
       if (pct < 1) {
-        requestAnimationFrame(tick);
+        frameId = requestAnimationFrame(tick);
       } else {
         setPhase('done');
-        setTimeout(() => onCompleteRef.current(), 400);
+        timeoutId = setTimeout(() => {
+          if (hasCompletedRef.current) return;
+          hasCompletedRef.current = true;
+          onCompleteRef.current();
+        }, 400);
       }
     };
 
-    requestAnimationFrame(tick);
+    frameId = requestAnimationFrame(tick);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frameId);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, []);
 
   return (
-    <div className={`sp-screen ${phase === 'done' ? 'sp-fadeout' : ''}`}>
+    <div className={`sp-screen ${standalone ? 'sp-standalone' : ''} ${phase === 'done' ? 'sp-fadeout' : ''}`}>
       <div className="sp-window">
         {/* Left panel - Pokemon GIF */}
         <div className="sp-left">

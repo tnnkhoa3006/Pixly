@@ -9,7 +9,6 @@ import NewProjectDialog from './components/ui/NewProjectDialog';
 import SaveConfirmDialog from './components/ui/SaveConfirmDialog';
 import OnboardingGuide from './components/ui/OnboardingGuide';
 import LoadingScreen from './components/ui/LoadingScreen';
-import SplashScreen from './components/ui/SplashScreen';
 import { usePlayback } from './hooks/usePlayback';
 import { exportGif } from './lib/gifExport';
 import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from './lib/drawing';
@@ -235,7 +234,6 @@ export default function App() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [showOnboarding, setShowOnboarding] = useState(() => localStorage.getItem('pixly_onboarding_done') !== '1');
   const [showLoading, setShowLoading] = useState(false);
-  const [showSplash, setShowSplash] = useState(true);
   const [gridSize, setGridSize] = useState<GridSizeType>(16);
   const [pixelSize, setPixelSize] = useState(32);
 
@@ -2441,13 +2439,6 @@ export default function App() {
     },
     about: () => window.alert(`${APP_NAME} - Professional Pixel Art Editor\n${APP_DISPLAY_VERSION} · Built with React & Tauri`)
   };
-
-  // --- Splash Screen (app startup) ---
-  if (showSplash) {
-    return (
-      <SplashScreen onComplete={() => setShowSplash(false)} />
-    );
-  }
 
   // --- Welcome Screen ---
   if (showWelcome) {
