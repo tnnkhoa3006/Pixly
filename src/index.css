@@ -2428,6 +2428,14 @@ body {
   color: var(--text-primary);
 }
 
+.update-toast-error {
+  max-width: 320px;
+  color: var(--color-danger) !important;
+  font-size: 11px !important;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
 /* ============================================================
    TAB BAR
    ============================================================ */

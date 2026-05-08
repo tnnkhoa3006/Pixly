@@ -417,7 +417,7 @@ export default function App() {
   const canRedo = redoStack.length > 0;
 
   // --- Updater (extracted to hook) ---
-  const { updateAvailable, isUpdating, installUpdate } = useAppUpdater();
+  const { updateAvailable, isUpdating, updateError, checkForUpdate, installUpdate } = useAppUpdater();
 
   // --- UI State ---
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(100);
@@ -2421,20 +2421,18 @@ export default function App() {
         return;
       }
       try {
-        const { check } = await import('@tauri-apps/plugin-updater');
-        const update = await check();
+        const update = updateAvailable ?? await checkForUpdate();
         if (update) {
-          // The hook's state will show the toast automatically on next render
-          // For the manual check we trigger installUpdate directly if found
           await update.downloadAndInstall();
           const { relaunch } = await import('@tauri-apps/plugin-process');
           await relaunch();
         } else {
           window.alert('You are on the latest version!');
         }
-      } catch (e) {
-        console.error('Failed to check for updates:', e);
-        window.alert('Failed to check for updates. Check your connection or try again later.');
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('Update action failed:', error);
+        window.alert(message);
       }
     },
     about: () => window.alert(`${APP_NAME} - Professional Pixel Art Editor\n${APP_DISPLAY_VERSION} · Built with React & Tauri`)
@@ -2963,7 +2961,12 @@ export default function App() {
             <button
               className="update-btn-primary"
               disabled={isUpdating}
-              onClick={installUpdate}
+              onClick={() => {
+                installUpdate().catch((error) => {
+                  const message = error instanceof Error ? error.message : String(error);
+                  window.alert(message);
+                });
+              }}
             >
               {isUpdating ? 'Installing...' : 'Update & Relaunch'}
             </button>
@@ -2975,6 +2978,7 @@ export default function App() {
               Later
             </button>
           </div>
+          {updateError && <p className="update-toast-error">{updateError}</p>}
         </div>
       )}
 
