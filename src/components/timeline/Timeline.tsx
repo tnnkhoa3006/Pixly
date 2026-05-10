@@ -5,23 +5,12 @@ import {
   GripHorizontal, Minimize2, X, PanelBottomOpen, Clock
 } from 'lucide-react';
 import type { Frame } from '../../types';
+import { useStore } from '../../store';
 
 interface TimelineProps {
-  frames: Frame[];
-  activeFrameIndex: number;
   gridSize: number;
   isPlaying: boolean;
-  onionSkinEnabled: boolean;
-
-  onSelectFrame: (index: number) => void;
-  onAddFrame: () => void;
-  onDuplicateFrame: () => void;
-  onDeleteFrame: () => void;
   onTogglePlay: () => void;
-  onToggleOnionSkin: () => void;
-  onSetDuration: (index: number, duration: number) => void;
-  onSetDurationAll: (duration: number) => void;
-  onReorderFrame: (oldIndex: number, newIndex: number) => void;
   /** Called when user drops the floating panel onto the tab bar */
   onPinToTab?: () => void;
 }
@@ -131,22 +120,23 @@ const KeyframeMarker = memo(({
 // ---------- Timeline ----------
 
 export default function Timeline({
-  frames,
-  activeFrameIndex,
   gridSize,
   isPlaying,
-  onionSkinEnabled,
-  onSelectFrame,
-  onAddFrame,
-  onDuplicateFrame,
-  onDeleteFrame,
   onTogglePlay,
-  onToggleOnionSkin,
-  onSetDuration,
-  onSetDurationAll,
-  onReorderFrame,
   onPinToTab,
 }: TimelineProps) {
+  // Read from Zustand store
+  const frames = useStore(s => s.animState.frames);
+  const activeFrameIndex = useStore(s => s.animState.activeFrameIndex);
+  const onionSkinEnabled = useStore(s => s.onionSkinEnabled);
+  const onSelectFrame = useStore(s => s.handleFrameChange);
+  const onAddFrame = useStore(s => s.handleAddFrame);
+  const onDuplicateFrame = useStore(s => s.handleDuplicateFrame);
+  const onDeleteFrame = useStore(s => s.handleDeleteFrame);
+  const onToggleOnionSkin = () => useStore.getState().setOnionSkinEnabled(!useStore.getState().onionSkinEnabled);
+  const onSetDuration = useStore(s => s.handleSetDuration);
+  const onSetDurationAll = useStore(s => s.handleSetDurationAll);
+  const onReorderFrame = useStore(s => s.handleReorderFrame);
   // Docked height (when not floating)
   const [dockedHeight, setDockedHeight] = useState(200);
   const isResizingDocked = useRef(false);

@@ -3,7 +3,8 @@ import {
   Play, Square, SkipBack, SkipForward, ChevronLeft, ChevronRight,
   Plus, Copy, Trash2, Eye, EyeOff, RefreshCw, RotateCcw, Maximize2, Minimize2
 } from 'lucide-react';
-import type { Frame, AnimationState } from '../../types';
+import type { Frame } from '../../types';
+import { useStore } from '../../store';
 
 // ─── Thumbnail size for the preview strip ───────────────────
 const THUMB_W = 64;
@@ -181,38 +182,29 @@ const FullscreenPreview = memo(({ frames, gridSize, onClose }: {
 
 // ─── Main AnimationView ──────────────────────────────────────
 interface AnimationViewProps {
-  animState: AnimationState;
   gridSize: number;
   isPlaying: boolean;
-  onionSkinEnabled: boolean;
-  onSelectFrame: (i: number) => void;
-  onAddFrame: () => void;
-  onDuplicateFrame: () => void;
-  onDeleteFrame: () => void;
   onTogglePlay: () => void;
-  onToggleOnionSkin: () => void;
-  onSetDuration: (index: number, duration: number) => void;
-  onSetDurationAll: (duration: number) => void;
-  onReorderFrame: (oldIndex: number, newIndex: number) => void;
-  onToggleLayerVisibility: (id: string) => void;
 }
 
 export default function AnimationView({
-  animState,
   gridSize,
   isPlaying,
-  onionSkinEnabled,
-  onSelectFrame,
-  onAddFrame,
-  onDuplicateFrame,
-  onDeleteFrame,
   onTogglePlay,
-  onToggleOnionSkin,
-  onSetDuration,
-  onSetDurationAll,
-  onReorderFrame,
-  onToggleLayerVisibility,
 }: AnimationViewProps) {
+  // Read from Zustand store
+  const animState = useStore(s => s.animState);
+  const onionSkinEnabled = useStore(s => s.onionSkinEnabled);
+  const onSelectFrame = useStore(s => s.handleFrameChange);
+  const onAddFrame = useStore(s => s.handleAddFrame);
+  const onDuplicateFrame = useStore(s => s.handleDuplicateFrame);
+  const onDeleteFrame = useStore(s => s.handleDeleteFrame);
+  const onToggleOnionSkin = () => useStore.getState().setOnionSkinEnabled(!useStore.getState().onionSkinEnabled);
+  const onSetDuration = useStore(s => s.handleSetDuration);
+  const onSetDurationAll = useStore(s => s.handleSetDurationAll);
+  const onReorderFrame = useStore(s => s.handleReorderFrame);
+  const onToggleLayerVisibility = useStore(s => s.toggleLayerVisibility);
+
   const { frames, activeFrameIndex } = animState;
   const activeFrame = frames[activeFrameIndex];
   const layers = activeFrame?.layers ?? [];

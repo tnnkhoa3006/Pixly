@@ -3463,6 +3463,10 @@ body {
   gap: 8px;
 }
 
+.npd-frame-grid::-webkit-scrollbar {
+  display: none;
+}
+
 .npd-label {
   font-size: 11px;
   font-weight: 600;
@@ -4119,6 +4123,17 @@ body {
   box-shadow: 0 0 12px var(--accent-glow, rgba(139, 92, 246, 0.5));
 }
 
+.ld-bar-indeterminate {
+  width: 40% !important;
+  animation: ld-bar-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes ld-bar-slide {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(150%); }
+  100% { transform: translateX(-100%); }
+}
+
 .ld-pct {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.35);
@@ -4266,6 +4281,34 @@ body {
 
 .layer-item:active {
   transform: scale(0.98);
+}
+
+.layer-item.dragging {
+  opacity: 0.4;
+}
+
+.layer-item.drop-above {
+  border-top: 2px solid var(--accent-light);
+  margin-top: -1px;
+}
+
+.layer-item.drop-below {
+  border-bottom: 2px solid var(--accent-light);
+  margin-bottom: -1px;
+}
+
+.layer-grip {
+  cursor: grab;
+  opacity: 0.4;
+  flex-shrink: 0;
+}
+
+.layer-grip:hover {
+  opacity: 0.8;
+}
+
+.layer-item.dragging .layer-grip {
+  cursor: grabbing;
 }
 
 /* ── Frame thumbnails — hover lift ── */
@@ -4487,4 +4530,5 @@ body {
   from { opacity: 0; transform: translateX(-50%) translateY(-6px); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
+
 

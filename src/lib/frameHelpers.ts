@@ -61,6 +61,26 @@ export const createDefaultFrame = (gridSize: number): Frame => {
   };
 };
 
+/** Resize a pixel grid using nearest-neighbor sampling */
+export const resizePixels = (
+  pixels: (string | null)[][],
+  oldW: number,
+  oldH: number,
+  newW: number,
+  newH: number,
+): (string | null)[][] => {
+  if (newW <= 0 || newH <= 0) return [];
+  const result: (string | null)[][] = Array.from({ length: newH }, () => Array(newW).fill(null));
+  for (let y = 0; y < newH; y++) {
+    const srcY = Math.min(Math.floor(y * oldH / newH), oldH - 1);
+    for (let x = 0; x < newW; x++) {
+      const srcX = Math.min(Math.floor(x * oldW / newW), oldW - 1);
+      result[y][x] = pixels[srcY]?.[srcX] ?? null;
+    }
+  }
+  return result;
+};
+
 /**
  * Bakes the layer's transform (translate, rotate, scale) into its pixel grid.
  * Returns a new layer object with the updated grid and a reset transform.
