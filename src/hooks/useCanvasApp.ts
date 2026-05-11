@@ -23,6 +23,7 @@ import {
 } from '../lib/transformHelpers';
 import { hexToHsl, hslToHex } from '../lib/colorHelpers';
 import { PIXEL_FONT } from '../lib/pixelFont';
+import type { MotionConfig } from '../lib/motion/types';
 
 export function useCanvasApp() {
   // UI state from Zustand store
@@ -58,6 +59,15 @@ export function useCanvasApp() {
   const setIsSpacePressed = useStore(s => s.setIsSpacePressed);
   const pickerHoverColor = useStore(s => s.pickerHoverColor);
   const setPickerHoverColor = useStore(s => s.setPickerHoverColor);
+
+  // Motion Assist state
+  const showMotionAssistDialog = useStore(s => s.showMotionAssistDialog);
+  const setShowMotionAssistDialog = useStore(s => s.setShowMotionAssistDialog);
+  const suggestions = useStore(s => s.suggestions);
+  const isShowingSuggestions = useStore(s => s.isShowingSuggestions);
+  const generateMotionAssist = useStore(s => s.generateMotionAssist);
+  const acceptSuggestions = useStore(s => s.acceptSuggestions);
+  const rejectSuggestions = useStore(s => s.rejectSuggestions);
 
   const pixelSize = useStore(s => s.pixelSize);
   const setPixelSize = useStore(s => s.setPixelSize);
@@ -345,9 +355,14 @@ export function useCanvasApp() {
         }
         if (onionFrames.length === 0) onionFrames = null;
       }
-      requestAnimationFrame(() => { canvasRef.current?.renderFrame(frames[activeFrameIndex], onionFrames); });
+      // Build suggestion frames for overlay
+      const suggestionFrames = isShowingSuggestions && suggestions.length > 0
+        ? suggestions.map(s => ({ grid: s.grid, opacity: s.opacity, tint: s.tint }))
+        : null;
+
+      requestAnimationFrame(() => { canvasRef.current?.renderFrame(frames[activeFrameIndex], onionFrames, suggestionFrames); });
     }
-  }, [frames, activeFrameIndex, onionSkinEnabled, isPlaying, pixelSize, showGrid]);
+  }, [frames, activeFrameIndex, onionSkinEnabled, isPlaying, pixelSize, showGrid, isShowingSuggestions, suggestions]);
 
   const pushUndoSnapshot = useStore(s => s.pushUndoSnapshot);
 
@@ -1265,7 +1280,13 @@ export function useCanvasApp() {
       { type: 'separator' },
       { label: 'Add Frame', action: 'addFrame' },
       { label: 'Duplicate Frame', action: 'duplicateFrame' },
-      { label: 'Delete Frame', action: 'deleteFrame', disabled: frames.length <= 1 }
+      { label: 'Delete Frame', action: 'deleteFrame', disabled: frames.length <= 1 },
+      { type: 'separator' },
+      { label: 'Motion Assist...', action: 'motionAssist' },
+      ...(isShowingSuggestions ? [
+        { label: 'Accept Suggestions', action: 'acceptMotionSuggestions' },
+        { label: 'Reject Suggestions', action: 'rejectMotionSuggestions' },
+      ] : []),
     ]},
     { label: 'Help', items: [
       { label: 'Check for Updates...', action: 'checkUpdates' },
@@ -1304,6 +1325,9 @@ export function useCanvasApp() {
     addFrame: handleAddFrame,
     duplicateFrame: handleDuplicateFrame,
     deleteFrame: handleDeleteFrame,
+    motionAssist: () => setShowMotionAssistDialog(true),
+    acceptMotionSuggestions: () => acceptSuggestions('Motion', animState.frames[animState.activeFrameIndex]?.duration ?? 100),
+    rejectMotionSuggestions: () => rejectSuggestions(),
     checkUpdates: async () => {
       if (!('__TAURI_INTERNALS__' in window)) { window.alert('Updates are only supported in the desktop app.'); return; }
       try {
@@ -1362,7 +1386,7 @@ export function useCanvasApp() {
     },
     rightSidebar: {
       width: rightSidebarWidth, layers, activeLayerId, selectedLayerIds,
-      onAddLayer: () => addLayer(layers.length), onDeleteLayer: deleteLayer,
+      onAddLayer: () => addLayer(layers.length, gridSize), onDeleteLayer: deleteLayer,
       onLayerClick: handleLayerClick, onToggleLayerSelection: toggleLayerSelection,
       onReorderLayer: handleReorderLayer,
       onResizerPointerDown: onRightResizerPointerDown,
@@ -1386,6 +1410,8 @@ export function useCanvasApp() {
       showExportFrameDialog, setShowExportFrameDialog,
       onExportFrameConfirm: handleExportFrameConfirm,
       exportFrameFrames: frames, exportFrameActiveIndex: activeFrameIndex,
+      showMotionAssistDialog, setShowMotionAssistDialog,
+      onMotionAssistConfirm: (config: MotionConfig) => generateMotionAssist(config.templateId, config, gridSize),
     },
     overlays: {
       updateAvailable, isUpdating, updateError, installUpdate,

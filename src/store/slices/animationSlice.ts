@@ -19,7 +19,7 @@ export interface AnimationSlice {
 
   // Layer operations
   toggleLayerVisibility: (id: string) => void;
-  addLayer: (layerCount: number) => void;
+  addLayer: (layerCount: number, gridSize: number) => void;
   deleteLayer: (id: string) => void;
   toggleLayerSelection: (id: string) => void;
   handleLayerClick: (id: string, isMulti: boolean) => void;
@@ -124,8 +124,7 @@ export const createAnimationSlice: StateCreator<AnimationSlice, [], [], Animatio
     });
   },
 
-  addLayer: (layerCount) => {
-    const { gridSize } = get() as unknown as StoreState;
+  addLayer: (layerCount, gridSize) => {
     pushUndo();
     set(prev => {
       const nextLayers = [...prev.animState.frames[prev.animState.activeFrameIndex].layers, {
