@@ -1411,6 +1411,8 @@ export function useCanvasApp() {
       onExportFrameConfirm: handleExportFrameConfirm,
       exportFrameFrames: frames, exportFrameActiveIndex: activeFrameIndex,
       showMotionAssistDialog, setShowMotionAssistDialog,
+      currentFrame: frames[activeFrameIndex],
+      gridSize,
       onMotionAssistConfirm: (config: MotionConfig) => generateMotionAssist(config.templateId, config, gridSize),
     },
     overlays: {

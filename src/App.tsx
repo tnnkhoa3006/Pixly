@@ -15,6 +15,7 @@ import BottomBar from './components/ui/BottomBar';
 import BrushPopup from './components/ui/BrushPopup';
 import UpdateToast from './components/ui/UpdateToast';
 import ExportFrameDialog from './components/ui/ExportFrameDialog';
+import MotionAssistDialog from './components/ui/MotionAssistDialog';
 
 export default function App() {
   const app = useCanvasApp();
@@ -103,6 +104,14 @@ export default function App() {
           activeFrameIndex={app.dialogs.exportFrameActiveIndex}
           onConfirm={app.dialogs.onExportFrameConfirm}
           onCancel={() => app.dialogs.setShowExportFrameDialog(false)}
+        />
+      )}
+      {app.dialogs.showMotionAssistDialog && (
+        <MotionAssistDialog
+          currentFrame={app.dialogs.currentFrame}
+          gridSize={app.dialogs.gridSize}
+          onConfirm={app.dialogs.onMotionAssistConfirm}
+          onCancel={() => app.dialogs.setShowMotionAssistDialog(false)}
         />
       )}
     </div>

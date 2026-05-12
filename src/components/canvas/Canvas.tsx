@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useRef, useImperativeHandle } from 'react';
-import type { Frame, Layer, LayerTransform } from '../../types';
+import type { Frame, Layer, LayerTransform, PixelGrid } from '../../types';
 
 interface CanvasProps {
   gridSize: number;
@@ -12,6 +12,7 @@ export interface CanvasHandle {
   renderFrame: (
     frame: Frame,
     onionFrames?: { frame: Frame; tint: 'prev' | 'next'; opacity: number }[] | null,
+    suggestionFrames?: { grid: PixelGrid; opacity: number; tint: string }[] | null,
   ) => void;
 }
 
@@ -152,9 +153,42 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     }
   };
 
+  const renderSuggestionGrid = (
+    ctx: CanvasRenderingContext2D,
+    grid: PixelGrid,
+    gs: number,
+    ps: number,
+    tint: string,
+    opacity: number,
+  ) => {
+    const buffer = document.createElement('canvas');
+    buffer.width = gs;
+    buffer.height = gs;
+    const bCtx = buffer.getContext('2d');
+    if (!bCtx) return;
+
+    ctx.save();
+    ctx.globalAlpha = opacity;
+
+    bCtx.clearRect(0, 0, gs, gs);
+    for (let y = 0; y < gs; y++) {
+      for (let x = 0; x < gs; x++) {
+        const color = grid[y]?.[x];
+        if (color) {
+          bCtx.fillStyle = tint;
+          bCtx.fillRect(x, y, 1, 1);
+        }
+      }
+    }
+
+    ctx.drawImage(buffer, 0, 0, gs, gs, 0, 0, gs * ps, gs * ps);
+    ctx.restore();
+  };
+
   const doRender = (
     frame: Frame,
     onionFrames?: { frame: Frame; tint: 'prev' | 'next'; opacity: number }[] | null,
+    suggestionFrames?: { grid: PixelGrid; opacity: number; tint: string }[] | null,
   ) => {
     const ctx = ctxRef.current;
     if (!ctx) return;
@@ -179,7 +213,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     // 3. Current frame
     renderLayers(ctx, frame.layers, gs, ps);
 
-    // 4. Grid overlay (un-transformed)
+    // 4. Suggestion overlay
+    if (suggestionFrames) {
+      for (const { grid, tint, opacity } of suggestionFrames) {
+        renderSuggestionGrid(ctx, grid, gs, ps, tint, opacity);
+      }
+    }
+
+    // 5. Grid overlay (un-transformed)
     if (sg && ps >= 8) {
       drawGrid(ctx);
     }
@@ -197,8 +238,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     renderFrame: (
       frame: Frame,
       onionFrames?: { frame: Frame; tint: 'prev' | 'next'; opacity: number }[] | null,
+      suggestionFrames?: { grid: PixelGrid; opacity: number; tint: string }[] | null,
     ) => {
-      doRender(frame, onionFrames);
+      doRender(frame, onionFrames, suggestionFrames);
     },
   }));
 
