@@ -11,6 +11,7 @@ interface PreviewCanvasProps {
 
 export interface PreviewCanvasHandle {
   drawPreview: (tool: PreviewTool, startX: number, startY: number, endX: number, endY: number, color: string | null) => void;
+  drawPath: (points: { x: number; y: number }[], color: string, closed?: boolean) => void;
   clear: () => void;
 }
 
@@ -100,6 +101,34 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
         ctx.strokeRect(minX * pixelSize, minY * pixelSize, (maxX - minX + 1) * pixelSize, (maxY - minY + 1) * pixelSize);
         ctx.setLineDash([]);
       }
+    },
+    drawPath: (points: { x: number; y: number }[], color: string, closed: boolean = false) => {
+      const ctx = ctxRef.current;
+      if (!ctx) return;
+
+      const logicalWidth = gridSize * pixelSize;
+      const logicalHeight = gridSize * pixelSize;
+      ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+      if (points.length === 0) return;
+
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, Math.min(3, pixelSize * 0.18));
+      ctx.setLineDash([Math.max(4, pixelSize * 0.65), Math.max(3, pixelSize * 0.45)]);
+      ctx.beginPath();
+      ctx.moveTo((points[0].x + 0.5) * pixelSize, (points[0].y + 0.5) * pixelSize);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo((points[i].x + 0.5) * pixelSize, (points[i].y + 0.5) * pixelSize);
+      }
+      if (closed && points.length > 2) ctx.closePath();
+      ctx.stroke();
+
+      if (closed && points.length > 2) {
+        ctx.fillStyle = `${color}22`;
+        ctx.fill();
+      }
+      ctx.restore();
+      ctx.setLineDash([]);
     },
     clear: () => {
       const ctx = ctxRef.current;

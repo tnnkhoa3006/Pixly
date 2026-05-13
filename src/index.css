@@ -249,6 +249,25 @@ body {
   color: var(--text-primary);
 }
 
+.layer-name-input {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent-light);
+  border-radius: 4px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.layer-item.active .layer-name-input {
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.65);
+}
+
 .opacity-slider-container {
   display: flex;
   align-items: center;
@@ -4616,11 +4635,42 @@ body {
   background: var(--bg-base);
   border-radius: 8px;
   border: 1px solid var(--border-subtle);
+  position: relative;
+  min-height: 170px;
 }
 
 .ma-preview-canvas {
   image-rendering: pixelated;
   border-radius: 4px;
+}
+
+.ma-preview-loading {
+  position: absolute;
+  inset: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 6px;
+  background: rgba(12, 12, 18, 0.72);
+  color: var(--text-primary);
+  font-size: 12px;
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+
+.ma-preview-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--accent-from);
+  border-radius: 50%;
+  animation: ma-spin 0.8s linear infinite;
+}
+
+@keyframes ma-spin {
+  to { transform: rotate(360deg); }
 }
 
 .ma-preview-label {
@@ -4809,4 +4859,67 @@ body {
   cursor: crosshair !important;
 }
 
+/* Cut tool popup */
+.cut-popup-content {
+  width: 340px;
+}
+
+.cut-popup-section {
+  margin-top: 12px;
+}
+
+.cut-popup-section h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.cut-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cut-mode-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.cut-mode-item span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cut-mode-item strong {
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.cut-mode-item small {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.25;
+}
+
+.cut-mode-item:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+.cut-mode-item.active {
+  border-color: var(--accent-light);
+  background: rgba(124, 58, 237, 0.18);
+}
 

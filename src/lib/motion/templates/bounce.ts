@@ -2,6 +2,7 @@ import type { Frame, PixelGrid } from '../../../types';
 import type { MotionTemplate, MotionConfig, SuggestionFrame } from '../types';
 import { getEasing } from '../easing';
 import { analyzeSprite } from '../regionDetect';
+import { healMotionGaps } from '../gapFill';
 import { createEmptyGrid } from '../../frameHelpers';
 
 export const bounceTemplate: MotionTemplate = {
@@ -97,7 +98,7 @@ export const bounceTemplate: MotionTemplate = {
         }
       }
 
-      results.push({ grid, opacity: 0.5, tint: '#7c3aed' });
+      results.push({ grid: healMotionGaps(grid, sourceGrid, gridSize), opacity: 0.5, tint: '#7c3aed' });
     }
 
     return results;

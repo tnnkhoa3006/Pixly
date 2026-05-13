@@ -1,5 +1,5 @@
-import { memo, useState } from 'react';
-import { Plus, Eye, EyeOff, CheckSquare, Square, Trash2, GripVertical } from 'lucide-react';
+import { memo, useEffect, useRef, useState } from 'react';
+import { Plus, Eye, EyeOff, CheckSquare, Square, Trash2, GripVertical, Pencil } from 'lucide-react';
 import type { Layer } from '../../types';
 import { useStore } from '../../store';
 
@@ -10,6 +10,7 @@ interface RightSidebarProps {
   selectedLayerIds: string[];
   onAddLayer: () => void;
   onDeleteLayer: (id: string) => void;
+  onRenameLayer: (id: string, name: string) => void;
   onLayerClick: (id: string, isMulti: boolean) => void;
   onToggleLayerSelection: (id: string) => void;
   onReorderLayer: (oldIndex: number, newIndex: number) => void;
@@ -18,13 +19,37 @@ interface RightSidebarProps {
 
 export default memo(function RightSidebar({
   width, layers, activeLayerId, selectedLayerIds,
-  onAddLayer, onDeleteLayer, onLayerClick, onToggleLayerSelection, onReorderLayer, onResizerPointerDown,
+  onAddLayer, onDeleteLayer, onRenameLayer, onLayerClick, onToggleLayerSelection, onReorderLayer, onResizerPointerDown,
 }: RightSidebarProps) {
   const [draggedVisualIndex, setDraggedVisualIndex] = useState<number | null>(null);
   const [dropTargetVisualIndex, setDropTargetVisualIndex] = useState<number | null>(null);
   const [dropPosition, setDropPosition] = useState<'top' | 'bottom' | null>(null);
+  const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   const reversedLayers = [...layers].reverse();
+
+  useEffect(() => {
+    if (!editingLayerId) return;
+    editInputRef.current?.focus();
+    editInputRef.current?.select();
+  }, [editingLayerId]);
+
+  const beginRename = (layer: Layer) => {
+    setEditingLayerId(layer.id);
+    setDraftName(layer.name);
+  };
+
+  const commitRename = () => {
+    if (!editingLayerId) return;
+    onRenameLayer(editingLayerId, draftName);
+    setEditingLayerId(null);
+  };
+
+  const cancelRename = () => {
+    setEditingLayerId(null);
+  };
 
   return (
     <div className="right-sidebar" style={{ width }}>
@@ -51,7 +76,7 @@ export default memo(function RightSidebar({
                 isDropTarget && dropPosition === 'top' ? 'drop-above' : '',
                 isDropTarget && dropPosition === 'bottom' ? 'drop-below' : '',
               ].filter(Boolean).join(' ')}
-              draggable={layers.length > 1}
+              draggable={layers.length > 1 && editingLayerId !== layer.id}
               onClick={(e) => onLayerClick(layer.id, e.ctrlKey || e.metaKey)}
               onDragStart={(e) => {
                 e.dataTransfer.effectAllowed = 'move';
@@ -108,7 +133,46 @@ export default memo(function RightSidebar({
                   {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
                 </button>
 
-                <span className="layer-name">{layer.name}</span>
+                {editingLayerId === layer.id ? (
+                  <input
+                    ref={editInputRef}
+                    className="layer-name-input"
+                    value={draftName}
+                    maxLength={80}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        commitRename();
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        cancelRename();
+                      }
+                    }}
+                  />
+                ) : (
+                  <span
+                    className="layer-name"
+                    title={layer.name}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      beginRename(layer);
+                    }}
+                  >
+                    {layer.name}
+                  </span>
+                )}
+
+                <button
+                  className="layer-btn"
+                  onClick={(e) => { e.stopPropagation(); beginRename(layer); }}
+                  title="Rename Layer"
+                >
+                  <Pencil size={14} />
+                </button>
 
                 <button className="layer-btn" onClick={(e) => { e.stopPropagation(); onDeleteLayer(layer.id); }} disabled={layers.length <= 1}>
                   <Trash2 size={16} />

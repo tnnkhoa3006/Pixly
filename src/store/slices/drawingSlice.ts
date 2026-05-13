@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand';
-import type { ToolType } from '../../types';
+import type { CutMode, ToolType } from '../../types';
 import type { TransformHud } from '../../lib/transformHelpers';
 
 export type BrushPixels = { pixels: (string | null)[][]; width: number; height: number };
@@ -48,12 +48,14 @@ const DEFAULT_BRUSHES: BrushPixels[] = [
 export interface DrawingSlice {
   currentTool: ToolType;
   currentColor: string;
+  cutMode: CutMode;
   customBrush: BrushData;
   savedBrushes: BrushPixels[];
   transformHud: TransformHud | null;
 
   setCurrentTool: (tool: ToolType | ((prev: ToolType) => ToolType)) => void;
   setCurrentColor: (color: string) => void;
+  setCutMode: (mode: CutMode) => void;
   setCustomBrush: (brush: BrushData) => void;
   setSavedBrushes: (brushes: BrushPixels[] | ((prev: BrushPixels[]) => BrushPixels[])) => void;
   setTransformHud: (hud: TransformHud | null) => void;
@@ -62,6 +64,7 @@ export interface DrawingSlice {
 export const createDrawingSlice: StateCreator<DrawingSlice, [], [], DrawingSlice> = (set) => ({
   currentTool: 'brush',
   currentColor: '#000000',
+  cutMode: 'lasso',
   customBrush: null,
   savedBrushes: DEFAULT_BRUSHES,
   transformHud: null,
@@ -70,6 +73,7 @@ export const createDrawingSlice: StateCreator<DrawingSlice, [], [], DrawingSlice
     currentTool: typeof tool === 'function' ? tool(prev.currentTool) : tool,
   })),
   setCurrentColor: (color) => set({ currentColor: color }),
+  setCutMode: (mode) => set({ cutMode: mode }),
   setCustomBrush: (brush) => set({ customBrush: brush }),
   setSavedBrushes: (brushes) => set(prev => ({
     savedBrushes: typeof brushes === 'function' ? brushes(prev.savedBrushes) : brushes,

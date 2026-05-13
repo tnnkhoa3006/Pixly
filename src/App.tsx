@@ -13,6 +13,7 @@ import RightSidebar from './components/ui/RightSidebar';
 import CanvasWorkspace from './components/canvas/CanvasWorkspace';
 import BottomBar from './components/ui/BottomBar';
 import BrushPopup from './components/ui/BrushPopup';
+import CutPopup from './components/ui/CutPopup';
 import UpdateToast from './components/ui/UpdateToast';
 import ExportFrameDialog from './components/ui/ExportFrameDialog';
 import MotionAssistDialog from './components/ui/MotionAssistDialog';
@@ -98,6 +99,7 @@ export default function App() {
         </div>
       )}
       {app.tabs.showBrushPopup && <BrushPopup {...app.brushPopup} />}
+      {app.tabs.showCutPopup && <CutPopup {...app.cutPopup} />}
       {app.dialogs.showExportFrameDialog && (
         <ExportFrameDialog
           frames={app.dialogs.exportFrameFrames}
@@ -112,8 +114,7 @@ export default function App() {
           allFrames={app.dialogs.allFrames}
           activeFrameIndex={app.dialogs.activeFrameIndex}
           gridSize={app.dialogs.gridSize}
-          onConfirmTemplate={app.dialogs.onMotionAssistConfirm}
-          onConfirmInterpolation={app.dialogs.onKeyframeInterpolationConfirm}
+          onApplySuggestions={app.dialogs.onMotionSuggestionsApply}
           onCancel={() => app.dialogs.setShowMotionAssistDialog(false)}
         />
       )}

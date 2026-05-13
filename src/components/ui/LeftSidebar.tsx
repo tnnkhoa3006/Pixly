@@ -1,6 +1,7 @@
 import { memo } from 'react';
-import { Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle, Sun, CloudRain, SprayCan, Type, BoxSelect, Move, Undo, Redo } from 'lucide-react';
-import type { ToolType } from '../../types';
+import { Brush, Eraser, PaintBucket, Pipette, Minus, Square, Circle, Sun, CloudRain, SprayCan, Type, BoxSelect, Move, Undo, Redo, Scissors } from 'lucide-react';
+import type { CutMode, ToolType } from '../../types';
+import type { BrushPixels } from '../../store/slices/drawingSlice';
 
 const RefreshCwIcon = ({ size }: { size: number }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
@@ -12,7 +13,8 @@ const MaximizeIcon = ({ size }: { size: number }) => (
 interface LeftSidebarProps {
   width: number;
   currentTool: ToolType;
-  customBrush: any;
+  cutMode: CutMode;
+  customBrush: BrushPixels | null;
   brushSize: number;
   canUndo: boolean;
   canRedo: boolean;
@@ -21,12 +23,13 @@ interface LeftSidebarProps {
   onUndo: () => void;
   onRedo: () => void;
   onOpenBrushPopup: () => void;
+  onOpenCutPopup: () => void;
   onResizerPointerDown: (e: React.PointerEvent) => void;
 }
 
 export default memo(function LeftSidebar({
-  width, currentTool, customBrush, brushSize, canUndo, canRedo,
-  onActivateTool, onBrushSizeChange, onUndo, onRedo, onOpenBrushPopup, onResizerPointerDown,
+  width, currentTool, cutMode, customBrush, brushSize, canUndo, canRedo,
+  onActivateTool, onBrushSizeChange, onUndo, onRedo, onOpenBrushPopup, onOpenCutPopup, onResizerPointerDown,
 }: LeftSidebarProps) {
   return (
     <div className="sidebar" style={{ width }}>
@@ -52,6 +55,14 @@ export default memo(function LeftSidebar({
         <button className={`tool-icon-btn ${currentTool === 'spray' ? 'active' : ''}`} onClick={() => onActivateTool('spray')} title="Spray Paint (A)"><SprayCan size={20} /></button>
         <button className={`tool-icon-btn ${currentTool === 'text' ? 'active' : ''}`} onClick={() => onActivateTool('text')} title="Text (T)"><Type size={20} /></button>
         <button className={`tool-icon-btn ${currentTool === 'select' ? 'active' : ''}`} onClick={() => onActivateTool('select')} title="Select (S)"><BoxSelect size={20} /></button>
+        <button
+          className={`tool-icon-btn ${currentTool === 'cut' ? 'active' : ''}`}
+          onClick={() => onActivateTool('cut')}
+          onContextMenu={(e) => { e.preventDefault(); onOpenCutPopup(); }}
+          title={`Cut to Layer (${cutMode}) - Right click for modes`}
+        >
+          <Scissors size={20} />
+        </button>
       </div>
 
       <div className="tool-separator" />

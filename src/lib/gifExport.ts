@@ -1,13 +1,23 @@
 /**
- * Minimal GIF89a encoder — zero dependencies.
- * Supports per-frame delay and looping.
+ * Minimal GIF89a encoder - zero dependencies.
+ * Supports per-frame delay, looping, and automatic palette quantization.
  */
 
-import type { Frame } from '../types';
+import type { Frame, PixelGrid } from '../types';
+import { renderGridToCanvas, type Rgba } from './pixelGridRender';
+
+type Rgb = readonly [number, number, number];
+type RenderCanvas = HTMLCanvasElement | OffscreenCanvas;
+
+interface PaletteInfo {
+  palette: Rgb[];
+  exactMap?: Map<number, number>;
+  bucketToIndex?: Int16Array;
+}
 
 // ---- LZW Encoder ----
 
-function lzwEncode(indexStream: number[], minCodeSize: number): number[] {
+function lzwEncode(indexStream: ArrayLike<number>, minCodeSize: number): number[] {
   const clearCode = 1 << minCodeSize;
   const eoiCode = clearCode + 1;
 
@@ -85,60 +95,59 @@ function subBlocks(data: number[]): number[] {
     }
     i += size;
   }
-  out.push(0); // block terminator
+  out.push(0);
   return out;
 }
 
-// ---- Palette helpers ----
+// ---- Canvas rendering ----
 
-function buildPalette(colors: string[]): { palette: number[][]; colorMap: Map<string, number> } {
-  // GIF needs power-of-2 palette
-  let palBits = 1;
-  while ((1 << palBits) < colors.length) palBits++;
-  if (palBits < 2) palBits = 2;
-  const palSize = 1 << palBits;
-
-  const palette: number[][] = [];
-  const colorMap = new Map<string, number>();
-
-  for (let i = 0; i < palSize; i++) {
-    if (i < colors.length) {
-      const hex = colors[i];
-      const r = parseInt(hex.slice(1, 3), 16);
-      const g = parseInt(hex.slice(3, 5), 16);
-      const b = parseInt(hex.slice(5, 7), 16);
-      palette.push([r, g, b]);
-      colorMap.set(hex, i);
-    } else {
-      palette.push([0, 0, 0]);
-    }
+function createCanvas(width: number, height: number): RenderCanvas {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    return new OffscreenCanvas(width, height);
   }
 
-  return { palette, colorMap };
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
 }
 
-// ---- Frame rendering to index stream ----
+function getGridCanvas(
+  grid: PixelGrid,
+  gridSize: number,
+  cache: WeakMap<PixelGrid, RenderCanvas>,
+  colorCache: Map<string, Rgba>,
+): RenderCanvas {
+  const cached = cache.get(grid);
+  if (cached) return cached;
 
-function renderFrameToHexStream(
+  const canvas = createCanvas(gridSize, gridSize);
+  renderGridToCanvas(canvas, grid, gridSize, colorCache);
+  cache.set(grid, canvas);
+  return canvas;
+}
+
+function renderFrameToRgbStream(
   frame: Frame,
   gridSize: number,
   scale: number,
-): string[] {
+  gridCanvasCache: WeakMap<PixelGrid, RenderCanvas>,
+  colorCache: Map<string, Rgba>,
+): Uint32Array {
   const size = gridSize * scale;
-  const canvas = new OffscreenCanvas(size, size);
-  const ctx = canvas.getContext('2d')!;
-  ctx.imageSmoothingEnabled = false;
+  const canvas = createCanvas(size, size);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Could not render GIF frame.');
 
+  ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, size, size);
 
   for (const layer of frame.layers) {
     if (!layer.visible) continue;
-    
-    // Apply layer transform
+
     ctx.save();
-    const ps = scale;
-    ctx.translate(layer.transform.x * ps, layer.transform.y * ps);
+    ctx.translate(layer.transform.x * scale, layer.transform.y * scale);
 
     if (layer.transform.rotation !== 0) {
       const c = size / 2;
@@ -146,6 +155,7 @@ function renderFrameToHexStream(
       ctx.rotate((layer.transform.rotation * Math.PI) / 180);
       ctx.translate(-c, -c);
     }
+
     if (layer.transform.scale !== 1) {
       const c = size / 2;
       ctx.translate(c, c);
@@ -154,42 +164,115 @@ function renderFrameToHexStream(
     }
 
     ctx.globalAlpha = layer.opacity;
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < gridSize; x++) {
-        const color = layer.grid[y]?.[x];
-        if (color) {
-          ctx.fillStyle = color;
-          ctx.fillRect(x * ps, y * ps, ps, ps);
-        }
-      }
-    }
+    const layerCanvas = getGridCanvas(layer.grid, gridSize, gridCanvasCache, colorCache);
+    ctx.drawImage(layerCanvas, 0, 0, gridSize, gridSize, 0, 0, size, size);
     ctx.restore();
   }
 
-  const imageData = ctx.getImageData(0, 0, size, size);
-  const data = imageData.data;
-  const colors: string[] = new Array(size * size);
-
-  for (let i = 0; i < size * size; i++) {
-    const r = data[i * 4];
-    const g = data[i * 4 + 1];
-    const b = data[i * 4 + 2];
-    colors[i] = '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+  const { data } = ctx.getImageData(0, 0, size, size);
+  const stream = new Uint32Array(size * size);
+  for (let i = 0; i < stream.length; i++) {
+    const offset = i * 4;
+    stream[i] = (data[offset] << 16) | (data[offset + 1] << 8) | data[offset + 2];
   }
 
-  return colors;
+  return stream;
 }
 
-function renderHexStreamToIndices(
-  colors: string[],
-  colorMap: Map<string, number>,
-  bgIndex: number,
-): number[] {
-  const indices: number[] = new Array(colors.length);
-  for (let i = 0; i < colors.length; i++) {
-    indices[i] = colorMap.get(colors[i]) ?? bgIndex;
+// ---- Palette helpers ----
+
+function rgbToTuple(rgb: number): Rgb {
+  return [(rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff];
+}
+
+function rgb332Bucket(rgb: number): number {
+  const r = (rgb >> 21) & 0x07;
+  const g = (rgb >> 13) & 0x07;
+  const b = (rgb >> 6) & 0x03;
+  return (r << 5) | (g << 2) | b;
+}
+
+function buildPalette(histogram: Map<number, number>): PaletteInfo {
+  const colors = Array.from(histogram.keys());
+  if (colors.length <= 256) {
+    const exactMap = new Map<number, number>();
+    const palette = colors.map((rgb, index) => {
+      exactMap.set(rgb, index);
+      return rgbToTuple(rgb);
+    });
+    return { palette, exactMap };
+  }
+
+  const sumR = new Float64Array(256);
+  const sumG = new Float64Array(256);
+  const sumB = new Float64Array(256);
+  const counts = new Float64Array(256);
+
+  for (const [rgb, count] of histogram) {
+    const bucket = rgb332Bucket(rgb);
+    sumR[bucket] += ((rgb >> 16) & 0xff) * count;
+    sumG[bucket] += ((rgb >> 8) & 0xff) * count;
+    sumB[bucket] += (rgb & 0xff) * count;
+    counts[bucket] += count;
+  }
+
+  const bucketToIndex = new Int16Array(256);
+  bucketToIndex.fill(-1);
+  const palette: Rgb[] = [];
+
+  for (let bucket = 0; bucket < 256; bucket++) {
+    if (counts[bucket] === 0) continue;
+    bucketToIndex[bucket] = palette.length;
+    palette.push([
+      Math.round(sumR[bucket] / counts[bucket]),
+      Math.round(sumG[bucket] / counts[bucket]),
+      Math.round(sumB[bucket] / counts[bucket]),
+    ]);
+  }
+
+  return { palette, bucketToIndex };
+}
+
+function getPaletteIndex(rgb: number, paletteInfo: PaletteInfo): number {
+  if (paletteInfo.exactMap) {
+    return paletteInfo.exactMap.get(rgb) ?? 0;
+  }
+
+  const bucket = rgb332Bucket(rgb);
+  return paletteInfo.bucketToIndex?.[bucket] ?? 0;
+}
+
+function paddedPalette(palette: Rgb[]): { palette: Rgb[]; palBits: number } {
+  let palBits = 1;
+  while ((1 << palBits) < palette.length) palBits++;
+  if (palBits < 2) palBits = 2;
+
+  const palSize = 1 << palBits;
+  const padded = [...palette];
+  while (padded.length < palSize) {
+    padded.push([0, 0, 0]);
+  }
+
+  return { palette: padded, palBits };
+}
+
+function rgbStreamToIndices(stream: Uint32Array, paletteInfo: PaletteInfo): Uint8Array {
+  const indices = new Uint8Array(stream.length);
+  for (let i = 0; i < stream.length; i++) {
+    indices[i] = getPaletteIndex(stream[i], paletteInfo);
   }
   return indices;
+}
+
+function collectHistogram(stream: Uint32Array, histogram: Map<number, number>): void {
+  for (let i = 0; i < stream.length; i++) {
+    const rgb = stream[i];
+    histogram.set(rgb, (histogram.get(rgb) ?? 0) + 1);
+  }
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, 0));
 }
 
 // ---- Main export ----
@@ -199,24 +282,24 @@ export async function exportGif(
   gridSize: number,
   scale: number = 4,
 ): Promise<Blob> {
-  const size = gridSize * scale;
-  const renderedFrames = frames.map(frame => renderFrameToHexStream(frame, gridSize, scale));
-  const colorSet = new Set<string>(['#ffffff']);
-
-  for (const renderedFrame of renderedFrames) {
-    for (const color of renderedFrame) {
-      colorSet.add(color);
-      if (colorSet.size > 256) {
-        throw new Error('GIF export supports up to 256 rendered colors. Reduce colors or opacity variations and try again.');
-      }
-    }
+  if (frames.length === 0) {
+    throw new Error('No frames to export.');
   }
 
-  const { palette, colorMap } = buildPalette(Array.from(colorSet));
-  const bgIndex = colorMap.get('#ffffff') ?? 0;
+  const size = gridSize * scale;
+  const histogram = new Map<number, number>();
+  const gridCanvasCache = new WeakMap<PixelGrid, RenderCanvas>();
+  const colorCache = new Map<string, Rgba>();
 
-  const palBits = Math.ceil(Math.log2(palette.length));
-  const minCodeSize = Math.max(2, palBits);
+  for (const frame of frames) {
+    collectHistogram(renderFrameToRgbStream(frame, gridSize, scale, gridCanvasCache, colorCache), histogram);
+    await yieldToBrowser();
+  }
+
+  const paletteInfo = buildPalette(histogram);
+  const table = paddedPalette(paletteInfo.palette);
+  const bgIndex = getPaletteIndex(0xffffff, paletteInfo);
+  const minCodeSize = Math.max(2, table.palBits);
 
   // ---- Header ----
   const bytes: number[] = [];
@@ -224,17 +307,15 @@ export async function exportGif(
   const w16 = (v: number) => { bytes.push(v & 0xff); bytes.push((v >> 8) & 0xff); };
 
   w('GIF89a');
-  w16(size);  // width
-  w16(size);  // height
+  w16(size);
+  w16(size);
 
-  // Global color table flag
-  const gctFlag = 0x80 | ((palBits - 1) & 7) | (((palBits - 1) & 7) << 4);
+  const gctFlag = 0x80 | ((table.palBits - 1) & 7) | (((table.palBits - 1) & 7) << 4);
   bytes.push(gctFlag);
-  bytes.push(bgIndex);  // bg color index
-  bytes.push(0);  // pixel aspect ratio
+  bytes.push(bgIndex);
+  bytes.push(0);
 
-  // Global color table
-  for (const [r, g, b] of palette) {
+  for (const [r, g, b] of table.palette) {
     bytes.push(r, g, b);
   }
 
@@ -242,39 +323,36 @@ export async function exportGif(
   bytes.push(0x21, 0xff, 0x0b);
   w('NETSCAPE2.0');
   bytes.push(0x03, 0x01);
-  w16(0); // loop forever
+  w16(0);
   bytes.push(0x00);
 
   // ---- Frames ----
-  for (let fi = 0; fi < frames.length; fi++) {
-    const frame = frames[fi];
-    const delay = Math.round(frame.duration / 10); // GIF delay is in centiseconds
+  for (const frame of frames) {
+    const delay = Math.max(1, Math.round(frame.duration / 10));
 
-    // Graphic control extension
     bytes.push(0x21, 0xf9, 0x04);
-    bytes.push(0x00); // no transparency
+    bytes.push(0x00);
     w16(delay);
-    bytes.push(0x00); // transparent color index
+    bytes.push(0x00);
     bytes.push(0x00);
 
-    // Image descriptor
     bytes.push(0x2c);
-    w16(0); // left
-    w16(0); // top
+    w16(0);
+    w16(0);
     w16(size);
     w16(size);
-    bytes.push(0x00); // no local color table
+    bytes.push(0x00);
 
-    // LZW minimum code size
     bytes.push(minCodeSize);
 
-    const indices = renderHexStreamToIndices(renderedFrames[fi], colorMap, bgIndex);
+    const stream = renderFrameToRgbStream(frame, gridSize, scale, gridCanvasCache, colorCache);
+    const indices = rgbStreamToIndices(stream, paletteInfo);
     const compressed = lzwEncode(indices, minCodeSize);
     const blocks = subBlocks(compressed);
     for (const b of blocks) bytes.push(b);
+    await yieldToBrowser();
   }
 
-  // Trailer
   bytes.push(0x3b);
 
   return new Blob([new Uint8Array(bytes)], { type: 'image/gif' });

@@ -21,6 +21,7 @@ export interface AnimationSlice {
   toggleLayerVisibility: (id: string) => void;
   addLayer: (layerCount: number, gridSize: number) => void;
   deleteLayer: (id: string) => void;
+  renameLayer: (id: string, name: string) => void;
   toggleLayerSelection: (id: string) => void;
   handleLayerClick: (id: string, isMulti: boolean) => void;
   handleReorderLayer: (oldIndex: number, newIndex: number) => void;
@@ -166,6 +167,31 @@ export const createAnimationSlice: StateCreator<AnimationSlice, [], [], Animatio
       return {
         animState: { ...prev.animState, frames: nextFrames, activeLayerId: nextLayerId, selectedLayerIds: nextSelected },
       };
+    });
+  },
+
+  renameLayer: (id, name) => {
+    const nextName = name.trim();
+    if (!nextName) return;
+
+    const { animState } = get();
+    const currentName = animState.frames[animState.activeFrameIndex]
+      ?.layers.find(layer => layer.id === id)
+      ?.name;
+    if (currentName === nextName) return;
+
+    pushUndo();
+    set(prev => {
+      const nextFrames = prev.animState.frames.map(frame => {
+        let changed = false;
+        const nextLayers = frame.layers.map(layer => {
+          if (layer.id !== id) return layer;
+          changed = true;
+          return { ...layer, name: nextName };
+        });
+        return changed ? { ...frame, layers: nextLayers } : frame;
+      });
+      return { animState: { ...prev.animState, frames: nextFrames } };
     });
   },
 

@@ -12,6 +12,7 @@ export interface UiSlice {
   activeView: 'canvas' | 'animation';
   showNewProjectDialog: boolean;
   showBrushPopup: boolean;
+  showCutPopup: boolean;
   showLeftSidebar: boolean;
   showRightSidebar: boolean;
   leftSidebarWidth: number;
@@ -30,6 +31,7 @@ export interface UiSlice {
   setActiveView: (v: 'canvas' | 'animation') => void;
   setShowNewProjectDialog: (v: boolean) => void;
   setShowBrushPopup: (v: boolean) => void;
+  setShowCutPopup: (v: boolean) => void;
   setShowLeftSidebar: (v: boolean) => void;
   setShowRightSidebar: (v: boolean) => void;
   setLeftSidebarWidth: (v: number) => void;
@@ -50,6 +52,7 @@ export const createUiSlice: StateCreator<UiSlice, [], [], UiSlice> = (set) => ({
   activeView: 'canvas',
   showNewProjectDialog: false,
   showBrushPopup: false,
+  showCutPopup: false,
   showLeftSidebar: true,
   showRightSidebar: true,
   leftSidebarWidth: 100,
@@ -68,6 +71,7 @@ export const createUiSlice: StateCreator<UiSlice, [], [], UiSlice> = (set) => ({
   setActiveView: (v) => set({ activeView: v }),
   setShowNewProjectDialog: (v) => set({ showNewProjectDialog: v }),
   setShowBrushPopup: (v) => set({ showBrushPopup: v }),
+  setShowCutPopup: (v) => set({ showCutPopup: v }),
   setShowLeftSidebar: (v) => set({ showLeftSidebar: v }),
   setShowRightSidebar: (v) => set({ showRightSidebar: v }),
   setLeftSidebarWidth: (v) => set({ leftSidebarWidth: v }),

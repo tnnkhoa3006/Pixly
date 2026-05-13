@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Wind, ArrowDownUp, RotateCcw, Zap, Target, Flame,
   Eye, EyeOff, GitCompare, Wand2, Lock, Unlock, Paintbrush, Undo2,
@@ -10,7 +10,7 @@ import { suggestTemplates } from '../../lib/motion/templateMatch';
 import { analyzeSprite, getRegionTypeColor } from '../../lib/motion/regionDetect';
 import type {
   MotionConfig, EasingType, SuggestionFrame,
-  InterpolationConfig, TemplateScore,
+  InterpolationConfig, TemplateScore, SpriteAnalysis, RegionType,
 } from '../../lib/motion/types';
 import type { Frame, PixelGrid } from '../../types';
 import { createEmptyGrid } from '../../lib/frameHelpers';
@@ -20,8 +20,7 @@ interface MotionAssistDialogProps {
   allFrames: Frame[];
   activeFrameIndex: number;
   gridSize: number;
-  onConfirmTemplate: (config: MotionConfig) => void;
-  onConfirmInterpolation: (endFrameIndex: number, config: Partial<InterpolationConfig>) => void;
+  onApplySuggestions: (suggestions: SuggestionFrame[], useKeyframeInterpolation: boolean) => void;
   onCancel: () => void;
 }
 
@@ -39,6 +38,20 @@ const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   Wind, ArrowDownUp, RotateCcw, Zap, Target, Flame,
 };
 
+const REGION_LEGEND: { type: RegionType; label: string }[] = [
+  { type: 'head', label: 'Head' },
+  { type: 'body', label: 'Body' },
+  { type: 'arm', label: 'Arm' },
+  { type: 'leg', label: 'Leg' },
+  { type: 'accessory', label: 'Acc.' },
+];
+
+const PREVIEW_TARGET_SIZE = 220;
+
+function getPreviewScale(gridSize: number): number {
+  return Math.max(1, Math.floor(PREVIEW_TARGET_SIZE / Math.max(1, gridSize)));
+}
+
 function getMergedGrid(frame: Frame, gridSize: number): PixelGrid {
   const merged = createEmptyGrid(gridSize);
   for (const layer of frame.layers) {
@@ -55,9 +68,9 @@ function getMergedGrid(frame: Frame, gridSize: number): PixelGrid {
 
 export default function MotionAssistDialog({
   currentFrame, allFrames, activeFrameIndex, gridSize,
-  onConfirmTemplate, onConfirmInterpolation, onCancel,
+  onApplySuggestions, onCancel,
 }: MotionAssistDialogProps) {
-  const templates = getAllTemplates();
+  const templates = useMemo(() => getAllTemplates(), []);
 
   // Mode
   const [mode, setMode] = useState<DialogMode>('template');
@@ -78,6 +91,10 @@ export default function MotionAssistDialog({
   const [suggestions, setSuggestions] = useState<SuggestionFrame[]>([]);
   const [showRegions, setShowRegions] = useState(false);
   const [templateScores, setTemplateScores] = useState<TemplateScore[]>([]);
+  const [isPreviewBusy, setIsPreviewBusy] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState('Preparing preview...');
+  const [regionAnalysis, setRegionAnalysis] = useState<SpriteAnalysis | null>(null);
+  const [isRegionBusy, setIsRegionBusy] = useState(false);
 
   // Constraint state
   const [paletteLock, setPaletteLock] = useState(true);
@@ -91,53 +108,118 @@ export default function MotionAssistDialog({
   const [isPainting, setIsPainting] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewJobRef = useRef(0);
+  const scoreJobRef = useRef(0);
+  const regionJobRef = useRef(0);
 
   // Auto-suggest templates when dialog opens
   useEffect(() => {
-    const scores = suggestTemplates(currentFrame, gridSize);
-    setTemplateScores(scores);
-    if (scores.length > 0 && scores[0].score > 0.3) {
-      setSelectedTemplate(scores[0].templateId);
-      const bestTemplate = templates.find(t => t.id === scores[0].templateId);
-      if (bestTemplate?.defaultConfig.frameCount) setFrameCount(bestTemplate.defaultConfig.frameCount);
-      if (bestTemplate?.defaultConfig.intensity) setIntensity(bestTemplate.defaultConfig.intensity);
-      if (bestTemplate?.defaultConfig.easing) setEasing(bestTemplate.defaultConfig.easing);
-    }
-  }, [currentFrame, gridSize]);
+    let cancelled = false;
+    const jobId = ++scoreJobRef.current;
+
+    const timer = window.setTimeout(() => {
+      const scores = suggestTemplates(currentFrame, gridSize);
+      if (cancelled || scoreJobRef.current !== jobId) return;
+
+      setTemplateScores(scores);
+      if (scores.length > 0 && scores[0].score > 0.3) {
+        setSelectedTemplate(scores[0].templateId);
+        const bestTemplate = templates.find(t => t.id === scores[0].templateId);
+        if (bestTemplate?.defaultConfig.frameCount) setFrameCount(bestTemplate.defaultConfig.frameCount);
+        if (bestTemplate?.defaultConfig.intensity) setIntensity(bestTemplate.defaultConfig.intensity);
+        if (bestTemplate?.defaultConfig.easing) setEasing(bestTemplate.defaultConfig.easing);
+      }
+    }, 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [currentFrame, gridSize, templates]);
 
   // Generate suggestions when config changes
   useEffect(() => {
-    let result: SuggestionFrame[];
+    let cancelled = false;
+    const jobId = ++previewJobRef.current;
+    const busyTimer = window.setTimeout(() => {
+      if (cancelled || previewJobRef.current !== jobId) return;
+      setIsPreviewBusy(true);
+      setPreviewStatus(mode === 'template' ? 'Generating motion preview...' : 'Interpolating keyframes...');
+      setSuggestions([]);
+      setEditGrids([]);
+      setEditMode(false);
+      setPreviewIndex(0);
+    }, 0);
 
-    if (mode === 'template') {
-      const config: MotionConfig = { templateId: selectedTemplate, frameCount, intensity, easing };
-      result = generateSuggestions(selectedTemplate, currentFrame, null, config, gridSize);
-    } else {
-      const endFrame = allFrames[endFrameIndex];
-      if (!endFrame || endFrameIndex === activeFrameIndex) {
-        setSuggestions([]);
-        setEditGrids([]);
-        return;
+    const timer = window.setTimeout(() => {
+      let result: SuggestionFrame[] = [];
+
+      if (mode === 'template') {
+        const config: MotionConfig = { templateId: selectedTemplate, frameCount, intensity, easing };
+        result = generateSuggestions(selectedTemplate, currentFrame, null, config, gridSize);
+      } else {
+        const endFrame = allFrames[endFrameIndex];
+        if (endFrame && endFrameIndex !== activeFrameIndex) {
+          const interpConfig: Partial<InterpolationConfig> = {
+            frameCount,
+            easing,
+            useRegionMatching: true,
+            constraints: {
+              paletteLock,
+              gridSnap: true,
+              preserveOutline,
+              maxDisplacement,
+            },
+          };
+          result = interpolateKeyframes(currentFrame, endFrame, interpConfig, gridSize);
+        }
       }
-      const interpConfig: Partial<InterpolationConfig> = {
-        frameCount,
-        easing,
-        useRegionMatching: true,
-        constraints: {
-          paletteLock,
-          gridSnap: true,
-          preserveOutline,
-          maxDisplacement,
-        },
+
+      if (cancelled || previewJobRef.current !== jobId) return;
+      setSuggestions(result);
+      setIsPreviewBusy(false);
+    }, 80);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(busyTimer);
+      window.clearTimeout(timer);
+    };
+  }, [mode, selectedTemplate, frameCount, intensity, easing, endFrameIndex, paletteLock, preserveOutline, maxDisplacement, currentFrame, allFrames, activeFrameIndex, gridSize]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!showRegions) {
+      const resetTimer = window.setTimeout(() => {
+        if (cancelled) return;
+        setRegionAnalysis(null);
+        setIsRegionBusy(false);
+      }, 0);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(resetTimer);
       };
-      result = interpolateKeyframes(currentFrame, endFrame, interpConfig, gridSize);
     }
 
-    setSuggestions(result);
-    setEditGrids([]);
-    setEditMode(false);
-    setPreviewIndex(0);
-  }, [mode, selectedTemplate, frameCount, intensity, easing, endFrameIndex, paletteLock, preserveOutline, maxDisplacement, currentFrame, allFrames, activeFrameIndex, gridSize]);
+    const jobId = ++regionJobRef.current;
+    const busyTimer = window.setTimeout(() => {
+      if (cancelled || regionJobRef.current !== jobId) return;
+      setIsRegionBusy(true);
+    }, 0);
+    const timer = window.setTimeout(() => {
+      const mergedGrid = getMergedGrid(currentFrame, gridSize);
+      const analysis = analyzeSprite(mergedGrid, gridSize);
+      if (cancelled || regionJobRef.current !== jobId) return;
+      setRegionAnalysis(analysis);
+      setIsRegionBusy(false);
+    }, 50);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(busyTimer);
+      window.clearTimeout(timer);
+    };
+  }, [showRegions, currentFrame, gridSize]);
 
   // Render preview
   const renderPreview = useCallback(() => {
@@ -147,12 +229,13 @@ export default function MotionAssistDialog({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const scale = Math.floor(200 / gridSize);
+    const scale = getPreviewScale(gridSize);
     const size = gridSize * scale;
+    const cssSize = Math.min(240, size);
     canvas.width = size;
     canvas.height = size;
-    canvas.style.width = `${size}px`;
-    canvas.style.height = `${size}px`;
+    canvas.style.width = `${cssSize}px`;
+    canvas.style.height = `${cssSize}px`;
 
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, size, size);
@@ -182,11 +265,8 @@ export default function MotionAssistDialog({
     ctx.globalAlpha = 1;
 
     // Region visualization
-    if (showRegions) {
-      const mergedGrid = getMergedGrid(currentFrame, gridSize);
-      const analysis = analyzeSprite(mergedGrid, gridSize);
-
-      for (const region of analysis.regions) {
+    if (showRegions && regionAnalysis) {
+      for (const region of regionAnalysis.regions) {
         ctx.globalAlpha = 0.4;
         ctx.fillStyle = getRegionTypeColor(region.regionType);
         for (const p of region.pixels) {
@@ -239,7 +319,7 @@ export default function MotionAssistDialog({
         }
       }
     }
-  }, [currentFrame, gridSize, suggestions, editGrids, previewIndex, showRegions, editMode]);
+  }, [currentFrame, gridSize, suggestions, editGrids, previewIndex, showRegions, editMode, regionAnalysis]);
 
   useEffect(() => { renderPreview(); }, [renderPreview]);
 
@@ -252,41 +332,13 @@ export default function MotionAssistDialog({
     return () => clearInterval(interval);
   }, [suggestions.length, showRegions, editMode]);
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-      if (editMode && e.ctrlKey && e.key === 'z') {
-        handleUndoEdit();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [editMode]);
-
-  // Edit mode: handle canvas painting
-  const handleCanvasMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!editMode) return;
-    setIsPainting(true);
-    paintAt(e);
-  }, [editMode, editGrids, previewIndex, editColor]);
-
-  const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!editMode || !isPainting) return;
-    paintAt(e);
-  }, [editMode, isPainting, editGrids, previewIndex, editColor]);
-
-  const handleCanvasMouseUp = useCallback(() => {
-    setIsPainting(false);
-  }, []);
-
   const paintAt = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const scale = Math.floor(200 / gridSize);
-    const x = Math.floor((e.clientX - rect.left) / scale);
-    const y = Math.floor((e.clientY - rect.top) / scale);
+    const x = Math.floor(((e.clientX - rect.left) / rect.width) * gridSize);
+    const y = Math.floor(((e.clientY - rect.top) / rect.height) * gridSize);
 
     if (x < 0 || x >= gridSize || y < 0 || y >= gridSize) return;
 
@@ -319,6 +371,33 @@ export default function MotionAssistDialog({
     setEditGrids(newGrids);
   }, [editGrids, suggestions, previewIndex]);
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+      if (editMode && e.ctrlKey && e.key === 'z') {
+        handleUndoEdit();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [editMode, handleUndoEdit, onCancel]);
+
+  // Edit mode: handle canvas painting
+  const handleCanvasMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!editMode) return;
+    setIsPainting(true);
+    paintAt(e);
+  }, [editMode, paintAt]);
+
+  const handleCanvasMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!editMode || !isPainting) return;
+    paintAt(e);
+  }, [editMode, isPainting, paintAt]);
+
+  const handleCanvasMouseUp = useCallback(() => {
+    setIsPainting(false);
+  }, []);
+
   const toggleEditMode = useCallback(() => {
     if (!editMode) {
       // Entering edit mode: initialize edit grids
@@ -329,16 +408,14 @@ export default function MotionAssistDialog({
   }, [editMode, suggestions]);
 
   const handleApply = () => {
-    if (mode === 'template') {
-      onConfirmTemplate({ templateId: selectedTemplate, frameCount, intensity, easing });
-    } else {
-      onConfirmInterpolation(endFrameIndex, {
-        frameCount,
-        easing,
-        useRegionMatching: true,
-        constraints: { paletteLock, gridSnap: true, preserveOutline, maxDisplacement },
-      });
-    }
+    const gridsToApply = editGrids.length > 0
+      ? editGrids.map((grid, index) => ({
+        grid,
+        opacity: suggestions[index]?.opacity ?? 0.5,
+        tint: suggestions[index]?.tint ?? '#7c3aed',
+      }))
+      : suggestions;
+    onApplySuggestions(gridsToApply, mode === 'keyframe');
   };
 
   const currentTemplate = templates.find((t) => t.id === selectedTemplate);
@@ -446,8 +523,17 @@ export default function MotionAssistDialog({
               onMouseLeave={handleCanvasMouseUp}
               onContextMenu={(e) => e.preventDefault()}
             />
+            {(isPreviewBusy || isRegionBusy) && (
+              <div className="ma-preview-loading">
+                <div className="ma-preview-spinner" />
+                <span>{isRegionBusy ? 'Analyzing regions...' : previewStatus}</span>
+              </div>
+            )}
             <div className="ma-preview-controls">
-              {suggestions.length > 0 && !showRegions && (
+              {isPreviewBusy && !showRegions && (
+                <span className="ma-preview-label">Preparing preview</span>
+              )}
+              {!isPreviewBusy && suggestions.length > 0 && !showRegions && (
                 <span className="ma-preview-label">
                   {editMode ? 'Editing' : 'Preview'} {previewIndex + 1}/{suggestions.length}
                 </span>
@@ -455,7 +541,7 @@ export default function MotionAssistDialog({
               {showRegions && (
                 <span className="ma-preview-label">Region Analysis</span>
               )}
-              {suggestions.length === 0 && !showRegions && (
+              {!isPreviewBusy && suggestions.length === 0 && !showRegions && (
                 <span className="ma-preview-label" style={{ opacity: 0.5 }}>No preview</span>
               )}
 
@@ -463,6 +549,7 @@ export default function MotionAssistDialog({
                 <button
                   className="ma-region-toggle"
                   onClick={() => setShowRegions(!showRegions)}
+                  disabled={isPreviewBusy || isRegionBusy}
                   title={showRegions ? 'Show motion preview' : 'Show detected regions'}
                 >
                   {showRegions ? <Eye size={14} /> : <EyeOff size={14} />}
@@ -473,6 +560,7 @@ export default function MotionAssistDialog({
                   <button
                     className={`ma-region-toggle ${editMode ? 'ma-edit-active' : ''}`}
                     onClick={toggleEditMode}
+                    disabled={isPreviewBusy}
                     title={editMode ? 'Exit edit mode' : 'Edit suggestion'}
                   >
                     <Paintbrush size={14} />
@@ -510,17 +598,11 @@ export default function MotionAssistDialog({
           {/* Region legend */}
           {showRegions && (
             <div className="ma-region-legend">
-              {[
-                { type: 'head', label: 'Head' },
-                { type: 'body', label: 'Body' },
-                { type: 'arm', label: 'Arm' },
-                { type: 'leg', label: 'Leg' },
-                { type: 'accessory', label: 'Acc.' },
-              ].map(({ type, label }) => (
+              {REGION_LEGEND.map(({ type, label }) => (
                 <span key={type} className="ma-region-legend-item">
                   <span
                     className="ma-region-legend-dot"
-                    style={{ background: getRegionTypeColor(type as any) }}
+                    style={{ background: getRegionTypeColor(type) }}
                   />
                   {label}
                 </span>
@@ -604,7 +686,7 @@ export default function MotionAssistDialog({
           <button
             className="npd-btn-create"
             onClick={handleApply}
-            disabled={suggestions.length === 0}
+            disabled={isPreviewBusy || isRegionBusy || suggestions.length === 0}
           >
             {editMode ? 'Apply Edits' : 'Generate'}
           </button>

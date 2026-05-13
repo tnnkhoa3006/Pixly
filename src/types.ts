@@ -32,8 +32,10 @@ export type AnimationState = {
 export type ToolType =
   | 'brush' | 'eraser' | 'fill' | 'picker'
   | 'line' | 'rect' | 'circle' | 'select' | 'move'
-  | 'lighten' | 'darken' | 'spray' | 'text'
+  | 'lighten' | 'darken' | 'spray' | 'text' | 'cut'
   | 'frame-move' | 'frame-rotate' | 'frame-scale';
+
+export type CutMode = 'lasso' | 'marquee';
 
 export type SelectionState = {
   /** Top-left grid X of the selection region */

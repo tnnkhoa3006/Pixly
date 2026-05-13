@@ -10,12 +10,14 @@ export function matchRegions(
 ): RegionMatch[] {
   const matches: RegionMatch[] = [];
   const usedEnd = new Set<string>();
+  const startRegions = getMatchableRegions(startAnalysis.regions);
+  const endRegions = getMatchableRegions(endAnalysis.regions);
 
   // Score all pairs, then greedy-assign best matches
   const candidates: { start: PixelRegion; end: PixelRegion; score: number }[] = [];
 
-  for (const start of startAnalysis.regions) {
-    for (const end of endAnalysis.regions) {
+  for (const start of startRegions) {
+    for (const end of endRegions) {
       const score = computeRegionSimilarity(start, end, startAnalysis, endAnalysis);
       if (score > 0.2) {
         candidates.push({ start, end, score });
@@ -44,6 +46,13 @@ export function matchRegions(
   }
 
   return matches;
+}
+
+function getMatchableRegions(regions: PixelRegion[]): PixelRegion[] {
+  if (regions.length <= 256) return regions;
+  return [...regions]
+    .sort((a, b) => b.pixels.length - a.pixels.length)
+    .slice(0, 256);
 }
 
 /**
@@ -124,7 +133,6 @@ function colorDistance(hex1: string, hex2: string): number {
 export function findUnmatchedPixels(
   startAnalysis: SpriteAnalysis,
   matches: RegionMatch[],
-  _gridSize: number,
 ): { x: number; y: number }[] {
   const matchedSet = new Set<string>();
   for (const m of matches) {

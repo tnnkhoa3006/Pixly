@@ -10,7 +10,8 @@ import { createNewTab, tabFromProjectData } from '../lib/tabHelpers';
 import { saveProjectAs, saveProjectToPath, openProjectFile, deserializeProject } from '../lib/projectFile';
 import { openImageFile, imageBlobToGrid } from '../lib/imageImport';
 import { autoSaveProject, addRecentFile } from '../lib/autoSave';
-import type { AnimationState, ToolType, GridSizeType, Layer, LayerTransform, ProjectData, TabState, Frame } from '../types';
+import { splitLayer as splitLayerIntoParts, type LayerSplitPayload } from '../lib/layerSplit';
+import type { AnimationState, ToolType, CutMode, GridSizeType, Layer, LayerTransform, ProjectData, TabState, Frame } from '../types';
 import type { MenuConfig, ActionMap } from '../components/menu/MenuBar/types';
 import { useAppUpdater } from './useAppUpdater';
 import { useSidebarResize } from './useSidebarResize';
@@ -23,7 +24,6 @@ import {
 } from '../lib/transformHelpers';
 import { hexToHsl, hslToHex } from '../lib/colorHelpers';
 import { PIXEL_FONT } from '../lib/pixelFont';
-import type { MotionConfig } from '../lib/motion/types';
 
 export function useCanvasApp() {
   // UI state from Zustand store
@@ -49,6 +49,8 @@ export function useCanvasApp() {
   const setShowNewProjectDialog = useStore(s => s.setShowNewProjectDialog);
   const showBrushPopup = useStore(s => s.showBrushPopup);
   const setShowBrushPopup = useStore(s => s.setShowBrushPopup);
+  const showCutPopup = useStore(s => s.showCutPopup);
+  const setShowCutPopup = useStore(s => s.setShowCutPopup);
   const showLeftSidebar = useStore(s => s.showLeftSidebar);
   const setShowLeftSidebar = useStore(s => s.setShowLeftSidebar);
   const showRightSidebar = useStore(s => s.showRightSidebar);
@@ -65,8 +67,7 @@ export function useCanvasApp() {
   const setShowMotionAssistDialog = useStore(s => s.setShowMotionAssistDialog);
   const suggestions = useStore(s => s.suggestions);
   const isShowingSuggestions = useStore(s => s.isShowingSuggestions);
-  const generateMotionAssist = useStore(s => s.generateMotionAssist);
-  const generateKeyframeInterpolation = useStore(s => s.generateKeyframeInterpolation);
+  const showMotionSuggestions = useStore(s => s.showMotionSuggestions);
   const acceptSuggestions = useStore(s => s.acceptSuggestions);
   const rejectSuggestions = useStore(s => s.rejectSuggestions);
 
@@ -76,6 +77,8 @@ export function useCanvasApp() {
   const [gridSize, setGridSize] = useState<GridSizeType>(16);
   const [showExportFrameDialog, setShowExportFrameDialog] = useState(false);
   const [isExportingGif, setIsExportingGif] = useState(false);
+
+  const getGifExportScale = (size: number) => Math.max(1, Math.min(8, Math.floor(1200 / Math.max(1, size))));
 
   // Tab management
   const tabs = useStore(s => s.tabs);
@@ -249,6 +252,8 @@ export function useCanvasApp() {
   const setCurrentTool = useStore(s => s.setCurrentTool);
   const currentColor = useStore(s => s.currentColor);
   const setCurrentColor = useStore(s => s.setCurrentColor);
+  const cutMode = useStore(s => s.cutMode);
+  const setCutMode = useStore(s => s.setCutMode);
   const transformHud = useStore(s => s.transformHud);
   const setTransformHud = useStore(s => s.setTransformHud);
   const activeFrame = frames[activeFrameIndex];
@@ -266,6 +271,7 @@ export function useCanvasApp() {
   const hoverCanvasRef = useRef<HTMLCanvasElement>(null);
   const coordsDisplayRef = useRef<HTMLSpanElement>(null);
   const handleImportImageRef = useRef<(() => void) | null>(null);
+  const renderRafRef = useRef<number | null>(null);
 
   const panRef = useRef({ x: 0, y: 0 });
   const pixelSizeRef = useRef(pixelSize);
@@ -282,6 +288,7 @@ export function useCanvasApp() {
   const isDrawing = useRef(false);
   const strokeStart = useRef<{ x: number, y: number } | null>(null);
   const dragCurrent = useRef<{ x: number, y: number } | null>(null);
+  const cutPathRef = useRef<{ x: number; y: number }[]>([]);
   const lastBrushPoint = useRef<{ x: number, y: number } | null>(null);
   const transformSessionRef = useRef<TransformSession | null>(null);
   const ldOriginalGrid = useRef<(string | null)[][] | null>(null);
@@ -361,8 +368,18 @@ export function useCanvasApp() {
         ? suggestions.map(s => ({ grid: s.grid, opacity: s.opacity, tint: s.tint }))
         : null;
 
-      requestAnimationFrame(() => { canvasRef.current?.renderFrame(frames[activeFrameIndex], onionFrames, suggestionFrames); });
+      if (renderRafRef.current !== null) cancelAnimationFrame(renderRafRef.current);
+      renderRafRef.current = requestAnimationFrame(() => {
+        renderRafRef.current = null;
+        canvasRef.current?.renderFrame(frames[activeFrameIndex], onionFrames, suggestionFrames);
+      });
     }
+    return () => {
+      if (renderRafRef.current !== null) {
+        cancelAnimationFrame(renderRafRef.current);
+        renderRafRef.current = null;
+      }
+    };
   }, [frames, activeFrameIndex, onionSkinEnabled, isPlaying, pixelSize, showGrid, isShowingSuggestions, suggestions]);
 
   const pushUndoSnapshot = useStore(s => s.pushUndoSnapshot);
@@ -553,6 +570,7 @@ export function useCanvasApp() {
         if (key === 'r') activateTool('rect');
         if (key === 'c') activateTool('circle');
         if (key === 's' && !(e.ctrlKey || e.metaKey)) activateTool('select');
+        if (key === 'x' && !(e.ctrlKey || e.metaKey)) activateTool('cut');
         if (key === 'm') activateTool('move');
         if (key === 'd' && e.shiftKey) activateTool('darken');
         else if (key === 'd') activateTool('lighten');
@@ -734,6 +752,39 @@ export function useCanvasApp() {
   };
 
   const applyTool = (x: number, y: number, isRightClick: boolean) => { applyBrushPoints([{ x, y }], isRightClick); };
+
+  const applyLayerSplit = (action: CutMode, payload: LayerSplitPayload = {}) => {
+    const state = animStateRef.current;
+    const activeIdx = state.activeFrameIndex;
+    const frame = state.frames[activeIdx];
+    const layerIdx = frame?.layers.findIndex(l => l.id === state.activeLayerId) ?? -1;
+    if (!frame || layerIdx === -1) return false;
+
+    const result = splitLayerIntoParts(frame.layers[layerIdx], gridSize, action, payload);
+    if (!result) {
+      return false;
+    }
+
+    pushUndoSnapshot(state);
+    setAnimState(prev => {
+      const nextFrames = [...prev.frames];
+      const currentFrame = nextFrames[prev.activeFrameIndex];
+      const currentLayerIdx = currentFrame.layers.findIndex(l => l.id === prev.activeLayerId);
+      if (currentLayerIdx === -1) return prev;
+
+      const nextLayers = [...currentFrame.layers];
+      nextLayers.splice(currentLayerIdx, 1, ...result.layers);
+      nextFrames[prev.activeFrameIndex] = { ...currentFrame, layers: nextLayers };
+
+      return {
+        ...prev,
+        frames: nextFrames,
+        activeLayerId: result.activeLayerId,
+        selectedLayerIds: [result.activeLayerId],
+      };
+    });
+    return true;
+  };
 
   const applyStrokeSegment = (start: { x: number; y: number }, end: { x: number; y: number }, isRightClick: boolean) => {
     if (start.x === end.x && start.y === end.y) return;
@@ -952,7 +1003,7 @@ export function useCanvasApp() {
   const resetInteractionState = () => {
     isPanning.current = false; lastPanPoint.current = null;
     isDrawing.current = false; strokeStart.current = null;
-    dragCurrent.current = null; lastBrushPoint.current = null;
+    dragCurrent.current = null; cutPathRef.current = []; lastBrushPoint.current = null;
     activePointerId.current = null; transformSessionRef.current = null;
     ldOriginalGrid.current = null; setTransformHud(null);
   };
@@ -961,6 +1012,20 @@ export function useCanvasApp() {
     if (isPanning.current) { resetInteractionState(); return; }
     const tool = getActiveTool();
     if (isDrawing.current) {
+      if (tool === 'cut' && strokeStart.current && dragCurrent.current) {
+        if (cutMode === 'lasso') {
+          applyLayerSplit('lasso', { points: cutPathRef.current });
+        } else if (cutMode === 'marquee') {
+          applyLayerSplit('marquee', {
+            x0: strokeStart.current.x,
+            y0: strokeStart.current.y,
+            x1: dragCurrent.current.x,
+            y1: dragCurrent.current.y,
+          });
+        }
+        previewCanvasRef.current?.clear();
+        cutPathRef.current = [];
+      }
       if (['line', 'rect', 'circle'].includes(tool) && strokeStart.current && dragCurrent.current) commitGeometry(tool, strokeStart.current.x, strokeStart.current.y, dragCurrent.current.x, dragCurrent.current.y, button === 2);
       if (tool === 'select' && strokeStart.current && dragCurrent.current && !selection) confirmSelection(strokeStart.current.x, strokeStart.current.y, dragCurrent.current.x, dragCurrent.current.y);
       if (['line', 'rect', 'circle', 'select'].includes(tool)) previewCanvasRef.current?.clear();
@@ -1045,6 +1110,19 @@ export function useCanvasApp() {
       if (picked) { setCurrentColor(picked); activateTool(lastNonPickerToolRef.current !== 'picker' ? lastNonPickerToolRef.current : 'brush'); }
       return;
     }
+    if (tool === 'cut') {
+      isDrawing.current = true;
+      strokeStart.current = { x: coords.gridX, y: coords.gridY };
+      dragCurrent.current = { x: coords.gridX, y: coords.gridY };
+      cutPathRef.current = [{ x: coords.gridX, y: coords.gridY }];
+      capturePointer(e);
+      if (cutMode === 'lasso') {
+        previewCanvasRef.current?.drawPath(cutPathRef.current, '#f97316');
+      } else if (cutMode === 'marquee') {
+        previewCanvasRef.current?.drawPreview('select', coords.gridX, coords.gridY, coords.gridX, coords.gridY, '#f97316');
+      }
+      return;
+    }
     isDrawing.current = true; strokeStart.current = { x: coords.gridX, y: coords.gridY };
     dragCurrent.current = { x: coords.gridX, y: coords.gridY }; lastBrushPoint.current = { x: coords.gridX, y: coords.gridY };
     capturePointer(e);
@@ -1112,6 +1190,20 @@ export function useCanvasApp() {
       return;
     }
     if (strokeStart.current) {
+      if (tool === 'cut') {
+        if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
+        dragCurrent.current = { x: coords.gridX, y: coords.gridY };
+        if (cutMode === 'lasso') {
+          const last = cutPathRef.current[cutPathRef.current.length - 1];
+          if (!last || last.x !== coords.gridX || last.y !== coords.gridY) {
+            cutPathRef.current = [...cutPathRef.current, { x: coords.gridX, y: coords.gridY }];
+          }
+          previewCanvasRef.current?.drawPath(cutPathRef.current, '#f97316');
+        } else if (cutMode === 'marquee') {
+          previewCanvasRef.current?.drawPreview('select', strokeStart.current.x, strokeStart.current.y, coords.gridX, coords.gridY, '#f97316');
+        }
+        return;
+      }
       if (['line', 'rect', 'circle', 'select'].includes(tool)) {
         if (!isGridCoordInBounds(coords.gridX, coords.gridY)) return;
         dragCurrent.current = { x: coords.gridX, y: coords.gridY };
@@ -1140,6 +1232,7 @@ export function useCanvasApp() {
 
   const addLayer = useStore(s => s.addLayer);
   const deleteLayer = useStore(s => s.deleteLayer);
+  const renameLayer = useStore(s => s.renameLayer);
   const toggleLayerSelection = useStore(s => s.toggleLayerSelection);
   const handleLayerClick = useStore(s => s.handleLayerClick);
   const handleReorderLayer = useStore(s => s.handleReorderLayer);
@@ -1165,7 +1258,7 @@ export function useCanvasApp() {
     setIsExportingGif(true);
     await new Promise(r => setTimeout(r, 0)); // yield to let loading overlay render
     try {
-      const blob = await exportGif(frames, gridSize, 8);
+      const blob = await exportGif(frames, gridSize, getGifExportScale(gridSize));
       if ('__TAURI_INTERNALS__' in window) {
         const { save } = await import('@tauri-apps/plugin-dialog');
         const { writeFile } = await import('@tauri-apps/plugin-fs');
@@ -1381,13 +1474,13 @@ export function useCanvasApp() {
       onPointerCancel: handlePointerCancel, onPointerLeave: handlePointerLeave, onLostPointerCapture: handleLostPointerCapture,
     },
     leftSidebar: {
-      width: leftSidebarWidth, currentTool, customBrush, brushSize, canUndo, canRedo,
+      width: leftSidebarWidth, currentTool, cutMode, customBrush, brushSize, canUndo, canRedo,
       onActivateTool: activateTool, onBrushSizeChange: setBrushSize, onUndo: handleUndo, onRedo: handleRedo,
-      onOpenBrushPopup: () => setShowBrushPopup(true), onResizerPointerDown: onLeftResizerPointerDown,
+      onOpenBrushPopup: () => setShowBrushPopup(true), onOpenCutPopup: () => setShowCutPopup(true), onResizerPointerDown: onLeftResizerPointerDown,
     },
     rightSidebar: {
       width: rightSidebarWidth, layers, activeLayerId, selectedLayerIds,
-      onAddLayer: () => addLayer(layers.length, gridSize), onDeleteLayer: deleteLayer,
+      onAddLayer: () => addLayer(layers.length, gridSize), onDeleteLayer: deleteLayer, onRenameLayer: renameLayer,
       onLayerClick: handleLayerClick, onToggleLayerSelection: toggleLayerSelection,
       onReorderLayer: handleReorderLayer,
       onResizerPointerDown: onRightResizerPointerDown,
@@ -1404,6 +1497,11 @@ export function useCanvasApp() {
       onDeleteBrush: (idx: number) => { setSavedBrushes(prev => prev.filter((_, i) => i !== idx)); if (customBrush === savedBrushes[idx]) setCustomBrush(null); },
       onClose: () => setShowBrushPopup(false),
     },
+    cutPopup: {
+      cutMode,
+      onSelectMode: (mode: typeof cutMode) => { setCutMode(mode); activateTool('cut'); },
+      onClose: () => setShowCutPopup(false),
+    },
     dialogs: {
       showNewProjectDialog, setShowNewProjectDialog,
       saveConfirmTabId, setSaveConfirmTabId,
@@ -1416,8 +1514,9 @@ export function useCanvasApp() {
       allFrames: frames,
       activeFrameIndex,
       gridSize,
-      onMotionAssistConfirm: (config: MotionConfig) => generateMotionAssist(config.templateId, config, gridSize),
-      onKeyframeInterpolationConfirm: (endFrameIndex: number, config: any) => generateKeyframeInterpolation(endFrameIndex, config, gridSize),
+      onMotionSuggestionsApply: (motionSuggestions: import('../lib/motion/types').SuggestionFrame[], useKeyframeInterpolation: boolean) => {
+        showMotionSuggestions(motionSuggestions, animState.activeFrameIndex, useKeyframeInterpolation);
+      },
     },
     overlays: {
       updateAvailable, isUpdating, updateError, installUpdate,
@@ -1436,6 +1535,6 @@ export function useCanvasApp() {
       onTogglePlay: () => togglePlay(activeFrameIndex),
       onPinToTab: () => { setAnimationTabPinned(true); setActiveView('animation'); },
     },
-    tabs: { showBrushPopup },
+    tabs: { showBrushPopup, showCutPopup },
   };
 }

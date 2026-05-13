@@ -1,5 +1,6 @@
-import { forwardRef, useEffect, useRef, useImperativeHandle } from 'react';
+import { forwardRef, useEffect, useRef, useImperativeHandle, useCallback } from 'react';
 import type { Frame, Layer, LayerTransform, PixelGrid } from '../../types';
+import { renderGridToCanvas, type Rgba } from '../../lib/pixelGridRender';
 
 interface CanvasProps {
   gridSize: number;
@@ -19,6 +20,8 @@ export interface CanvasHandle {
 const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, showGrid }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const colorCacheRef = useRef<Map<string, Rgba>>(new Map());
+  const gridCanvasCacheRef = useRef<WeakMap<PixelGrid, Map<string, HTMLCanvasElement>>>(new WeakMap());
 
   // Keep latest props accessible to imperative methods
   const propsRef = useRef({ gridSize, pixelSize, showGrid });
@@ -26,7 +29,15 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
 
   // ---------- internal helpers ----------
 
-  const setupCanvas = () => {
+  const getBackingRatio = useCallback((logicalW: number, logicalH: number) => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const maxBackingPixels = 16_000_000;
+    const desiredPixels = logicalW * logicalH * dpr * dpr;
+    if (desiredPixels <= maxBackingPixels) return dpr;
+    return Math.max(1, Math.sqrt(maxBackingPixels / Math.max(1, logicalW * logicalH)));
+  }, []);
+
+  const setupCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -37,7 +48,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     const { gridSize: gs, pixelSize: ps } = propsRef.current;
     const logicalW = gs * ps;
     const logicalH = gs * ps;
-    const ratio = window.devicePixelRatio || 1;
+    const ratio = getBackingRatio(logicalW, logicalH);
 
     canvas.width = Math.round(logicalW * ratio);
     canvas.height = Math.round(logicalH * ratio);
@@ -58,7 +69,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     canvas.style.backgroundSize = `${bgSize}px ${bgSize}px`;
     canvas.style.backgroundPosition = `0 0, 0 ${ps}px, ${ps}px -${ps}px, -${ps}px 0px`;
     canvas.style.backgroundColor = 'white';
-  };
+  }, [getBackingRatio]);
 
   const drawGrid = (ctx: CanvasRenderingContext2D) => {
     const { gridSize: gs, pixelSize: ps } = propsRef.current;
@@ -66,12 +77,12 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
 
     const logicalW = gs * ps;
     const logicalH = gs * ps;
-    const ratio = window.devicePixelRatio || 1;
+    const ratio = getBackingRatio(logicalW, logicalH);
 
     // Very subtle solid lines
     ctx.strokeStyle = `rgba(0, 0, 0, 0.1)`;
     ctx.lineWidth = 1 / ratio;
-    ctx.setLineDash([]); 
+    ctx.setLineDash([]);
 
     ctx.beginPath();
     for (let i = 0; i <= gs; i++) {
@@ -106,6 +117,23 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     }
   };
 
+  const getGridCanvas = (grid: PixelGrid, gs: number, tint?: string) => {
+    const cacheKey = `${gs}:${tint ?? 'color'}`;
+    let variants = gridCanvasCacheRef.current.get(grid);
+    if (!variants) {
+      variants = new Map();
+      gridCanvasCacheRef.current.set(grid, variants);
+    }
+
+    const cached = variants.get(cacheKey);
+    if (cached) return cached;
+
+    const buffer = document.createElement('canvas');
+    renderGridToCanvas(buffer, grid, gs, colorCacheRef.current, tint);
+    variants.set(cacheKey, buffer);
+    return buffer;
+  };
+
   const renderLayers = (
     ctx: CanvasRenderingContext2D,
     layers: Layer[],
@@ -113,13 +141,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     ps: number,
     tint?: 'prev' | 'next',
   ) => {
-    // Create an offscreen buffer at 1:1 scale to avoid seams between pixels
-    const buffer = document.createElement('canvas');
-    buffer.width = gs;
-    buffer.height = gs;
-    const bCtx = buffer.getContext('2d');
-    if (!bCtx) return;
-
+    const logicalSize = gs * ps;
+    const tintColor = tint === 'prev' ? '#ff6b35' : tint === 'next' ? '#35a7ff' : undefined;
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i];
       if (!layer.visible) continue;
@@ -127,27 +150,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
       ctx.save();
       // Apply transform in screen-space
       applyTransform(ctx, layer.transform, gs, ps);
-      ctx.globalAlpha = layer.opacity;
-
-      // Draw pixels to the 1:1 buffer
-      bCtx.clearRect(0, 0, gs, gs);
-      for (let y = 0; y < gs; y++) {
-        for (let x = 0; x < gs; x++) {
-          const color = layer.grid[y]?.[x];
-          if (color) {
-            if (tint) {
-              // Convert pixel to tinted color: prev = red-orange, next = blue-green
-              bCtx.fillStyle = tint === 'prev' ? '#ff6b35' : '#35a7ff';
-            } else {
-              bCtx.fillStyle = color;
-            }
-            bCtx.fillRect(x, y, 1, 1);
-          }
-        }
-      }
-
-      // Draw the buffer to the main canvas scaled up
-      ctx.drawImage(buffer, 0, 0, gs, gs, 0, 0, gs * ps, gs * ps);
+      ctx.globalAlpha *= layer.opacity;
+      ctx.drawImage(getGridCanvas(layer.grid, gs, tintColor), 0, 0, gs, gs, 0, 0, logicalSize, logicalSize);
       
       ctx.restore();
     }
@@ -161,27 +165,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     tint: string,
     opacity: number,
   ) => {
-    const buffer = document.createElement('canvas');
-    buffer.width = gs;
-    buffer.height = gs;
-    const bCtx = buffer.getContext('2d');
-    if (!bCtx) return;
-
     ctx.save();
-    ctx.globalAlpha = opacity;
-
-    bCtx.clearRect(0, 0, gs, gs);
-    for (let y = 0; y < gs; y++) {
-      for (let x = 0; x < gs; x++) {
-        const color = grid[y]?.[x];
-        if (color) {
-          bCtx.fillStyle = tint;
-          bCtx.fillRect(x, y, 1, 1);
-        }
-      }
-    }
-
-    ctx.drawImage(buffer, 0, 0, gs, gs, 0, 0, gs * ps, gs * ps);
+    ctx.globalAlpha *= opacity;
+    ctx.drawImage(getGridCanvas(grid, gs, tint), 0, 0, gs, gs, 0, 0, gs * ps, gs * ps);
     ctx.restore();
   };
 
@@ -230,7 +216,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
 
   useEffect(() => {
     setupCanvas();
-  }, [gridSize, pixelSize, showGrid]);
+  }, [gridSize, pixelSize, showGrid, setupCanvas]);
 
   // ---------- imperative API ----------
 
