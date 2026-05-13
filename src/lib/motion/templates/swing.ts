@@ -44,15 +44,46 @@ export const swingTemplate: MotionTemplate = {
     const frameCount = Math.max(1, Math.min(8, config.frameCount));
     const intensity = Math.max(0.5, Math.min(4, config.intensity));
 
+    // Precompute pixel positions for rotation
+    const pixels: { x: number; y: number; color: string }[] = [];
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < gridSize; x++) {
+        const color = sourceGrid[y]?.[x];
+        if (color) pixels.push({ x, y, color });
+      }
+    }
+
     for (let i = 0; i < frameCount; i++) {
       const t = pingPong(easingFn(i / Math.max(1, frameCount - 1)));
-      // Swing angle: -intensity to +intensity degrees
-      const angle = (t - 0.5) * 2 * intensity * 5; // ±5° per intensity unit
+      const angle = (t - 0.5) * 2 * intensity * 5;
 
-      const grid = applySwingTransform(
-        sourceGrid, gridSize,
-        centerX, centerY, angle,
-      );
+      const grid = cloneGrid(sourceGrid, gridSize);
+      const rad = (angle * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+
+      // Clear only the pixels that will move
+      for (const p of pixels) {
+        grid[p.y][p.x] = null;
+      }
+
+      // Write rotated pixels to new positions
+      for (const p of pixels) {
+        const dx = p.x - centerX;
+        const dy = p.y - centerY;
+        const nx = Math.round(centerX + dx * cos - dy * sin);
+        const ny = Math.round(centerY + dx * sin + dy * cos);
+
+        if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
+          if (!grid[ny][nx]) {
+            grid[ny][nx] = p.color;
+          }
+        }
+      }
+
+      // Fill gaps: for any null pixel that was originally filled,
+      // copy from nearest filled neighbor in the result
+      fillGaps(grid, sourceGrid, gridSize);
 
       results.push({ grid, opacity: 0.5, tint: '#7c3aed' });
     }
@@ -61,35 +92,40 @@ export const swingTemplate: MotionTemplate = {
   },
 };
 
-function applySwingTransform(
-  source: PixelGrid,
-  gridSize: number,
-  pivotX: number,
-  pivotY: number,
-  angleDeg: number,
-): PixelGrid {
-  const result = createEmptyGrid(gridSize);
-  const rad = (angleDeg * Math.PI) / 180;
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-
+function fillGaps(grid: PixelGrid, source: PixelGrid, gridSize: number): void {
+  // For each pixel that was originally filled but is now empty,
+  // look at its neighbors in the result grid
   for (let y = 0; y < gridSize; y++) {
     for (let x = 0; x < gridSize; x++) {
-      const color = source[y]?.[x];
-      if (!color) continue;
+      if (!source[y]?.[x]) continue; // was already empty
+      if (grid[y]?.[x]) continue;    // already filled
 
-      const dx = x - pivotX;
-      const dy = y - pivotY;
-      const nx = Math.round(pivotX + dx * cos - dy * sin);
-      const ny = Math.round(pivotY + dx * sin + dy * cos);
-
-      if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
-        result[ny][nx] = color;
+      // Find nearest non-null neighbor in result grid
+      for (let r = 1; r <= 2; r++) {
+        let found = false;
+        for (const [dx, dy] of [[0, -r], [0, r], [-r, 0], [r, 0]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize && grid[ny]?.[nx]) {
+            grid[y][x] = grid[ny][nx];
+            found = true;
+            break;
+          }
+        }
+        if (found) break;
       }
     }
   }
+}
 
-  return result;
+function cloneGrid(grid: PixelGrid, gridSize: number): PixelGrid {
+  const clone = createEmptyGrid(gridSize);
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      clone[y][x] = grid[y]?.[x] ?? null;
+    }
+  }
+  return clone;
 }
 
 function getMergedGrid(frame: Frame, gridSize: number): PixelGrid {

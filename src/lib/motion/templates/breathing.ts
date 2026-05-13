@@ -1,13 +1,13 @@
 import type { Frame, PixelGrid } from '../../../types';
 import type { MotionTemplate, MotionConfig, SuggestionFrame } from '../types';
 import { getEasing, pingPong } from '../easing';
-import { getOutlinePixels } from '../regionDetect';
+import { analyzeSprite } from '../regionDetect';
 import { createEmptyGrid } from '../../frameHelpers';
 
 export const breathingTemplate: MotionTemplate = {
   id: 'breathing',
   name: 'Breathing',
-  description: 'Subtle expand/shift to make sprites feel alive',
+  description: 'Subtle expand/shift — head & chest rise, legs anchor',
   icon: 'Wind',
   defaultConfig: {
     frameCount: 3,
@@ -23,58 +23,73 @@ export const breathingTemplate: MotionTemplate = {
   ): SuggestionFrame[] {
     const results: SuggestionFrame[] = [];
     const sourceGrid = getMergedGrid(startFrame, gridSize);
-    const outline = getOutlinePixels(sourceGrid, gridSize);
+    const analysis = analyzeSprite(sourceGrid, gridSize);
     const easingFn = getEasing(config.easing);
-
-    // Find vertical center of the sprite
-    let sumY = 0;
-    for (const p of outline) sumY += p.y;
-    const centerY = outline.length > 0 ? sumY / outline.length : gridSize / 2;
 
     const frameCount = Math.max(1, Math.min(8, config.frameCount));
     const intensity = Math.max(0.1, Math.min(3, config.intensity));
 
+    // Precompute per-pixel offset map
+    const pixelOffsets = new Map<string, number>(); // "x,y" → dy offset
+
+    for (const region of analysis.regions) {
+      const baseOffset = getRegionBaseOffset(region.verticalZone, region.regionType, intensity);
+      for (const p of region.pixels) {
+        pixelOffsets.set(`${p.x},${p.y}`, baseOffset);
+      }
+    }
+
     for (let i = 0; i < frameCount; i++) {
       const t = pingPong(easingFn(i / Math.max(1, frameCount - 1)));
-      const offset = Math.round(intensity * t);
 
-      const grid = cloneGrid(sourceGrid, gridSize);
+      // Build new grid: copy-based, no gaps
+      const grid = createEmptyGrid(gridSize);
 
-      // Shift outline pixels: upper half moves up, lower half moves down
-      // This creates a subtle "expand" breathing effect
-      const shifted = new Set<string>();
+      for (let y = 0; y < gridSize; y++) {
+        for (let x = 0; x < gridSize; x++) {
+          const color = sourceGrid[y]?.[x];
+          if (!color) continue;
 
-      for (const p of outline) {
-        const key = `${p.x},${p.y}`;
-        if (shifted.has(key)) continue;
+          const baseOffset = pixelOffsets.get(`${x},${y}`) ?? 0;
+          const dy = Math.round(baseOffset * t);
+          const newY = y + dy;
 
-        const color = sourceGrid[p.y]?.[p.x];
-        if (!color) continue;
-
-        const isUpperHalf = p.y < centerY;
-        const dy = isUpperHalf ? -offset : offset;
-
-        const newY = p.y + dy;
-        if (newY < 0 || newY >= gridSize) continue;
-
-        // Only shift if target is empty
-        if (!grid[newY]?.[p.x]) {
-          grid[p.y][p.x] = null;
-          grid[newY][p.x] = color;
-          shifted.add(`${p.x},${newY}`);
+          if (newY >= 0 && newY < gridSize) {
+            // Only write if target is empty (first writer wins = back-to-front)
+            if (!grid[newY][x]) {
+              grid[newY][x] = color;
+            }
+          }
         }
       }
 
-      results.push({
-        grid,
-        opacity: 0.5,
-        tint: '#7c3aed',
-      });
+      results.push({ grid, opacity: 0.5, tint: '#7c3aed' });
     }
 
     return results;
   },
 };
+
+function getRegionBaseOffset(
+  zone: 'upper' | 'middle' | 'lower',
+  type: string,
+  intensity: number,
+): number {
+  if (zone === 'upper') {
+    if (type === 'head') return -intensity;
+    if (type === 'arm') return -intensity * 0.7;
+    return -intensity * 0.5;
+  }
+  if (zone === 'middle') {
+    if (type === 'body') return -intensity * 0.4;
+    return -intensity * 0.3;
+  }
+  if (zone === 'lower') {
+    if (type === 'leg') return intensity * 0.2;
+    return 0;
+  }
+  return 0;
+}
 
 function getMergedGrid(frame: Frame, gridSize: number): PixelGrid {
   const merged = createEmptyGrid(gridSize);
@@ -88,14 +103,4 @@ function getMergedGrid(frame: Frame, gridSize: number): PixelGrid {
     }
   }
   return merged;
-}
-
-function cloneGrid(grid: PixelGrid, gridSize: number): PixelGrid {
-  const clone = createEmptyGrid(gridSize);
-  for (let y = 0; y < gridSize; y++) {
-    for (let x = 0; x < gridSize; x++) {
-      clone[y][x] = grid[y]?.[x] ?? null;
-    }
-  }
-  return clone;
 }

@@ -4629,4 +4629,184 @@ body {
   opacity: 0.7;
 }
 
+.ma-preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  justify-content: center;
+}
+
+.ma-region-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 0.15s ease;
+}
+
+.ma-region-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ma-region-legend {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.ma-region-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.ma-region-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* ── Smart Tween Engine: Phase 3 ── */
+
+.ma-dialog-wide {
+  width: 460px !important;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.ma-mode-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 3px;
+  background: var(--bg-base);
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+}
+
+.ma-mode-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.ma-mode-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.ma-mode-btn.active {
+  background: var(--accent-from);
+  color: #fff;
+}
+
+.ma-score-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  color: inherit;
+  opacity: 0.8;
+  font-weight: 600;
+}
+
+.ma-template-btn.active .ma-score-badge {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.ma-template-reason {
+  font-size: 11px;
+  color: var(--accent-from);
+  margin: 0 0 8px 0;
+  opacity: 0.8;
+  font-style: italic;
+}
+
+.ma-keyframe-section {
+  margin-bottom: 8px;
+}
+
+.ma-constraints {
+  padding: 8px 10px;
+  background: var(--bg-base);
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 10px;
+}
+
+.ma-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.ma-checkbox input[type="checkbox"] {
+  accent-color: var(--accent-from);
+}
+
+.ma-preview-btns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ma-edit-active {
+  background: var(--accent-from) !important;
+  color: #fff !important;
+  border-color: var(--accent-to) !important;
+}
+
+.ma-edit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-base);
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  margin-bottom: 10px;
+}
+
+.ma-edit-color {
+  width: 28px;
+  height: 22px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  background: none;
+}
+
+.ma-canvas-editable {
+  cursor: crosshair !important;
+}
+
 

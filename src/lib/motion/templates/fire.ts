@@ -24,7 +24,6 @@ export const fireTemplate: MotionTemplate = {
     const sourceGrid = getMergedGrid(startFrame, gridSize);
     const easingFn = getEasing(config.easing);
 
-    // Collect and sort colors by brightness
     const colorSet = new Set<string>();
     for (let y = 0; y < gridSize; y++) {
       for (let x = 0; x < gridSize; x++) {
@@ -42,43 +41,77 @@ export const fireTemplate: MotionTemplate = {
     const frameCount = Math.max(1, Math.min(8, config.frameCount));
     const intensity = Math.max(0.5, Math.min(3, config.intensity));
 
+    // Precompute palette lookup for fast cycling
+    const paletteMap = new Map<string, string>();
+    for (let i = 0; i < palette.length; i++) {
+      paletteMap.set(palette[i].hex, palette[i].hex);
+    }
+
     for (let i = 0; i < frameCount; i++) {
       const t = easingFn(i / Math.max(1, frameCount - 1));
-      const grid = createEmptyGrid(gridSize);
+      const grid = cloneGrid(sourceGrid, gridSize);
 
-      // Upward drift amount
       const drift = Math.round(intensity * t);
-      // Palette cycle offset
       const cycleOffset = Math.floor(t * palette.length * 0.5);
 
-      for (let y = 0; y < gridSize; y++) {
-        for (let x = 0; x < gridSize; x++) {
-          const color = sourceGrid[y]?.[x];
-          if (!color) continue;
-
-          // Shift upward
-          const newY = y - drift;
-          if (newY < 0 || newY >= gridSize) continue;
-
-          // Cycle palette: shift to brighter color
-          const origIdx = palette.findIndex(p => p.hex === color);
-          const newIdx = origIdx >= 0
-            ? Math.min(palette.length - 1, origIdx + cycleOffset)
-            : origIdx;
-          const newColor = newIdx >= 0 ? palette[newIdx].hex : color;
-
-          // Random horizontal jitter for flame tips
-          const hash = ((x * 31 + y * 17 + i * 7919) % 100) / 100;
-          const jitterX = y < gridSize * 0.3 && hash < 0.3 * intensity
-            ? Math.round((hash - 0.15) * 2)
-            : 0;
-          const newX = Math.max(0, Math.min(gridSize - 1, x + jitterX));
-
-          grid[newY][newX] = newColor;
-        }
+      // Build cycled palette map for this frame
+      const cycledMap = new Map<string, string>();
+      for (let j = 0; j < palette.length; j++) {
+        const targetIdx = Math.min(palette.length - 1, j + cycleOffset);
+        cycledMap.set(palette[j].hex, palette[targetIdx].hex);
       }
 
-      results.push({ grid, opacity: 0.5, tint: '#7c3aed' });
+      // Apply upward drift: shift pixels up, keep base
+      if (drift > 0) {
+        const shifted = createEmptyGrid(gridSize);
+
+        // Write shifted pixels (top portion rises)
+        for (let y = 0; y < gridSize; y++) {
+          for (let x = 0; x < gridSize; x++) {
+            const color = sourceGrid[y]?.[x];
+            if (!color) continue;
+
+            const newY = y - drift;
+            if (newY >= 0 && newY < gridSize) {
+              // Apply palette cycling to shifted pixels
+              const cycledColor = cycledMap.get(color) ?? color;
+
+              // Horizontal jitter for flame tips (upper 30%)
+              const hash = ((x * 31 + y * 17 + i * 7919) % 100) / 100;
+              const jitterX = y < gridSize * 0.3 && hash < 0.3 * intensity
+                ? Math.round((hash - 0.15) * 2)
+                : 0;
+              const newX = Math.max(0, Math.min(gridSize - 1, x + jitterX));
+
+              if (!shifted[newY][newX]) {
+                shifted[newY][newX] = cycledColor;
+              }
+            }
+          }
+        }
+
+        // Keep original pixels at the base (bottom) as anchor
+        for (let y = 0; y < gridSize; y++) {
+          for (let x = 0; x < gridSize; x++) {
+            if (!shifted[y]?.[x] && sourceGrid[y]?.[x]) {
+              shifted[y][x] = sourceGrid[y][x];
+            }
+          }
+        }
+
+        results.push({ grid: shifted, opacity: 0.5, tint: '#7c3aed' });
+      } else {
+        // No drift — just apply palette cycling in-place
+        for (let y = 0; y < gridSize; y++) {
+          for (let x = 0; x < gridSize; x++) {
+            const color = grid[y]?.[x];
+            if (color) {
+              grid[y][x] = cycledMap.get(color) ?? color;
+            }
+          }
+        }
+        results.push({ grid, opacity: 0.5, tint: '#7c3aed' });
+      }
     }
 
     return results;
@@ -104,4 +137,14 @@ function getMergedGrid(frame: Frame, gridSize: number): PixelGrid {
     }
   }
   return merged;
+}
+
+function cloneGrid(grid: PixelGrid, gridSize: number): PixelGrid {
+  const clone = createEmptyGrid(gridSize);
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      clone[y][x] = grid[y]?.[x] ?? null;
+    }
+  }
+  return clone;
 }

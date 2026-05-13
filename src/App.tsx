@@ -109,8 +109,11 @@ export default function App() {
       {app.dialogs.showMotionAssistDialog && (
         <MotionAssistDialog
           currentFrame={app.dialogs.currentFrame}
+          allFrames={app.dialogs.allFrames}
+          activeFrameIndex={app.dialogs.activeFrameIndex}
           gridSize={app.dialogs.gridSize}
-          onConfirm={app.dialogs.onMotionAssistConfirm}
+          onConfirmTemplate={app.dialogs.onMotionAssistConfirm}
+          onConfirmInterpolation={app.dialogs.onKeyframeInterpolationConfirm}
           onCancel={() => app.dialogs.setShowMotionAssistDialog(false)}
         />
       )}

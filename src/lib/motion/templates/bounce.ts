@@ -1,12 +1,13 @@
 import type { Frame, PixelGrid } from '../../../types';
 import type { MotionTemplate, MotionConfig, SuggestionFrame } from '../types';
 import { getEasing } from '../easing';
+import { analyzeSprite } from '../regionDetect';
 import { createEmptyGrid } from '../../frameHelpers';
 
 export const bounceTemplate: MotionTemplate = {
   id: 'bounce',
   name: 'Bounce',
-  description: 'Squash & stretch with weight feeling',
+  description: 'Squash & stretch — legs compress, body follows, head leads',
   icon: 'ArrowDownUp',
   defaultConfig: {
     frameCount: 4,
@@ -22,27 +23,8 @@ export const bounceTemplate: MotionTemplate = {
   ): SuggestionFrame[] {
     const results: SuggestionFrame[] = [];
     const sourceGrid = getMergedGrid(startFrame, gridSize);
+    const analysis = analyzeSprite(sourceGrid, gridSize);
     const easingFn = getEasing(config.easing);
-
-    // Find sprite bounding box
-    let minX = gridSize, maxX = 0, minY = gridSize, maxY = 0;
-    for (let y = 0; y < gridSize; y++) {
-      for (let x = 0; x < gridSize; x++) {
-        if (sourceGrid[y]?.[x]) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-
-    if (minX > maxX || minY > maxY) return [];
-
-    const spriteW = maxX - minX + 1;
-    const spriteH = maxY - minY + 1;
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
 
     const frameCount = Math.max(1, Math.min(8, config.frameCount));
     const intensity = Math.max(0.5, Math.min(4, config.intensity));
@@ -50,81 +32,130 @@ export const bounceTemplate: MotionTemplate = {
     for (let i = 0; i < frameCount; i++) {
       const t = easingFn(i / Math.max(1, frameCount - 1));
 
-      // Bounce curve: go down then up
-      let yOffset: number;
-      let yScale: number;
-      let xScale: number;
-
+      // Bounce curve: down then up
+      let phase: number;
+      let direction: number;
       if (t < 0.5) {
-        // Going down — squash
-        const phase = t / 0.5;
-        yOffset = Math.round(intensity * phase);
-        yScale = 1 - 0.15 * phase;
-        xScale = 1 + 0.1 * phase;
+        phase = t / 0.5;
+        direction = -1;
       } else {
-        // Going up — stretch
-        const phase = (t - 0.5) / 0.5;
-        yOffset = Math.round(intensity * (1 - phase));
-        yScale = 1 + 0.1 * phase;
-        xScale = 1 - 0.05 * phase;
+        phase = (t - 0.5) / 0.5;
+        direction = 1;
       }
 
-      const grid = applyBounceTransform(
-        sourceGrid, gridSize,
-        minX, minY, maxX, maxY,
-        spriteW, spriteH,
-        centerX, centerY,
-        yOffset, xScale, yScale,
-      );
+      // Build transform params per region
+      const regionTransforms = new Map<string, {
+        yOffset: number;
+        xScale: number;
+        yScale: number;
+        centerX: number;
+        centerY: number;
+      }>();
 
-      results.push({
-        grid,
-        opacity: 0.5,
-        tint: '#7c3aed',
-      });
+      for (const region of analysis.regions) {
+        regionTransforms.set(region.id, {
+          yOffset: getBounceYOffset(region, intensity, phase, direction),
+          xScale: getBounceXScale(region, phase, direction),
+          yScale: getBounceYScale(region, phase, direction),
+          centerX: region.center.x,
+          centerY: region.center.y,
+        });
+      }
+
+      // Build per-pixel transform lookup
+      const pixelTransforms = new Map<string, { dx: number; dy: number }>();
+
+      for (const region of analysis.regions) {
+        const xf = regionTransforms.get(region.id)!;
+        for (const p of region.pixels) {
+          const relX = p.x - xf.centerX;
+          const relY = p.y - xf.centerY;
+          const nx = Math.round(xf.centerX + relX * xf.xScale);
+          const ny = Math.round(xf.centerY + relY * xf.yScale + xf.yOffset);
+          pixelTransforms.set(`${p.x},${p.y}`, { dx: nx - p.x, dy: ny - p.y });
+        }
+      }
+
+      // Copy-based rendering: write to new grid, no gaps
+      const grid = createEmptyGrid(gridSize);
+
+      // Process pixels back-to-front (bottom rows first) so upper body draws on top
+      for (let y = gridSize - 1; y >= 0; y--) {
+        for (let x = 0; x < gridSize; x++) {
+          const color = sourceGrid[y]?.[x];
+          if (!color) continue;
+
+          const xf = pixelTransforms.get(`${x},${y}`);
+          const nx = x + (xf?.dx ?? 0);
+          const ny = y + (xf?.dy ?? 0);
+
+          if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
+            if (!grid[ny][nx]) {
+              grid[ny][nx] = color;
+            }
+          }
+        }
+      }
+
+      results.push({ grid, opacity: 0.5, tint: '#7c3aed' });
     }
 
     return results;
   },
 };
 
-function applyBounceTransform(
-  source: PixelGrid,
-  gridSize: number,
-  minX: number, minY: number,
-  maxX: number, maxY: number,
-  _spriteW: number, _spriteH: number,
-  centerX: number, centerY: number,
-  yOffset: number,
-  xScale: number,
-  yScale: number,
-): PixelGrid {
-  const result = createEmptyGrid(gridSize);
+function getBounceYOffset(
+  region: { verticalZone: string },
+  intensity: number,
+  phase: number,
+  direction: number,
+): number {
+  const base = intensity * phase;
 
-  for (let sy = minY; sy <= maxY; sy++) {
-    for (let sx = minX; sx <= maxX; sx++) {
-      const color = source[sy]?.[sx];
-      if (!color) continue;
-
-      // Transform relative to sprite center
-      const relX = sx - centerX;
-      const relY = sy - centerY;
-
-      // Apply scale
-      let nx = Math.round(centerX + relX * xScale);
-      let ny = Math.round(centerY + relY * yScale);
-
-      // Apply vertical offset (bounce)
-      ny += yOffset;
-
-      // Clamp to grid
-      if (nx < 0 || nx >= gridSize || ny < 0 || ny >= gridSize) continue;
-
-      result[ny][nx] = color;
-    }
+  if (direction < 0) {
+    if (region.verticalZone === 'lower') return Math.round(base * 1.2);
+    if (region.verticalZone === 'middle') return Math.round(base * 0.8);
+    return Math.round(base * 0.4);
+  } else {
+    if (region.verticalZone === 'upper') return Math.round(-base * 1.2);
+    if (region.verticalZone === 'middle') return Math.round(-base * 0.8);
+    return Math.round(-base * 0.3);
   }
+}
 
-  return result;
+function getBounceXScale(
+  region: { verticalZone: string },
+  phase: number,
+  direction: number,
+): number {
+  const squash = 0.1 * phase;
+
+  if (direction < 0) {
+    if (region.verticalZone === 'lower') return 1 + squash * 1.2;
+    if (region.verticalZone === 'middle') return 1 + squash * 0.8;
+    return 1 + squash * 0.3;
+  } else {
+    if (region.verticalZone === 'lower') return 1 - squash * 0.5;
+    return 1;
+  }
+}
+
+function getBounceYScale(
+  region: { verticalZone: string },
+  phase: number,
+  direction: number,
+): number {
+  const amount = 0.15 * phase;
+
+  if (direction < 0) {
+    if (region.verticalZone === 'lower') return 1 - amount * 1.2;
+    if (region.verticalZone === 'middle') return 1 - amount * 0.6;
+    return 1 - amount * 0.2;
+  } else {
+    if (region.verticalZone === 'upper') return 1 + amount * 1.2;
+    if (region.verticalZone === 'middle') return 1 + amount * 0.6;
+    return 1 + amount * 0.2;
+  }
 }
 
 function getMergedGrid(frame: Frame, gridSize: number): PixelGrid {

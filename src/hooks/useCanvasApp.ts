@@ -66,6 +66,7 @@ export function useCanvasApp() {
   const suggestions = useStore(s => s.suggestions);
   const isShowingSuggestions = useStore(s => s.isShowingSuggestions);
   const generateMotionAssist = useStore(s => s.generateMotionAssist);
+  const generateKeyframeInterpolation = useStore(s => s.generateKeyframeInterpolation);
   const acceptSuggestions = useStore(s => s.acceptSuggestions);
   const rejectSuggestions = useStore(s => s.rejectSuggestions);
 
@@ -1412,8 +1413,11 @@ export function useCanvasApp() {
       exportFrameFrames: frames, exportFrameActiveIndex: activeFrameIndex,
       showMotionAssistDialog, setShowMotionAssistDialog,
       currentFrame: frames[activeFrameIndex],
+      allFrames: frames,
+      activeFrameIndex,
       gridSize,
       onMotionAssistConfirm: (config: MotionConfig) => generateMotionAssist(config.templateId, config, gridSize),
+      onKeyframeInterpolationConfirm: (endFrameIndex: number, config: any) => generateKeyframeInterpolation(endFrameIndex, config, gridSize),
     },
     overlays: {
       updateAvailable, isUpdating, updateError, installUpdate,
