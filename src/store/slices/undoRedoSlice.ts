@@ -1,17 +1,53 @@
 import type { StateCreator } from 'zustand';
-import type { AnimationState } from '../../types';
-import { cloneFrame } from '../../lib/frameHelpers';
+import type { AnimationState, Frame } from '../../types';
 import type { StoreState } from '../index';
 
-const MAX_HISTORY = 50;
+const MAX_HISTORY = 30;
+const MAX_HISTORY_CELLS = 4_000_000;
+
+function cloneFrameForHistory(frame: Frame): Frame {
+  return {
+    id: frame.id,
+    layers: frame.layers.map(layer => ({
+      ...layer,
+      grid: layer.grid.map(row => [...row]),
+      transform: { ...layer.transform },
+    })),
+    duration: frame.duration,
+  };
+}
 
 export function cloneAnimationState(state: AnimationState): AnimationState {
   return {
-    frames: state.frames.map(frame => cloneFrame(frame)),
+    frames: state.frames.map(frame => cloneFrameForHistory(frame)),
     activeFrameIndex: state.activeFrameIndex,
     activeLayerId: state.activeLayerId,
     selectedLayerIds: [...state.selectedLayerIds],
   };
+}
+
+function estimateAnimationCells(state: AnimationState): number {
+  return state.frames.reduce((frameTotal, frame) => {
+    return frameTotal + frame.layers.reduce((layerTotal, layer) => {
+      return layerTotal + layer.grid.reduce((rowTotal, row) => rowTotal + row.length, 0);
+    }, 0);
+  }, 0);
+}
+
+function trimHistory(stack: AnimationState[]): AnimationState[] {
+  let totalCells = 0;
+  const kept: AnimationState[] = [];
+
+  for (let i = stack.length - 1; i >= 0 && kept.length < MAX_HISTORY; i--) {
+    const snapshot = stack[i];
+    const cells = estimateAnimationCells(snapshot);
+    if (kept.length > 0 && totalCells + cells > MAX_HISTORY_CELLS) break;
+    kept.push(snapshot);
+    totalCells += cells;
+  }
+
+  kept.reverse();
+  return kept;
 }
 
 export interface UndoRedoSlice {
@@ -38,8 +74,7 @@ export const createUndoRedoSlice: StateCreator<UndoRedoSlice, [], [], UndoRedoSl
   pushUndoSnapshot: (state) => {
     const snapshot = cloneAnimationState(state);
     set(prev => {
-      const next = [...prev.undoStack, snapshot];
-      if (next.length > MAX_HISTORY) next.shift();
+      const next = trimHistory([...prev.undoStack, snapshot]);
       return { undoStack: next, redoStack: [] };
     });
   },
@@ -50,7 +85,7 @@ export const createUndoRedoSlice: StateCreator<UndoRedoSlice, [], [], UndoRedoSl
     const store = get() as unknown as StoreState;
     const previous = undoStack[undoStack.length - 1];
     set(prev => ({
-      redoStack: [...prev.redoStack, cloneAnimationState(store.animState)],
+      redoStack: trimHistory([...prev.redoStack, cloneAnimationState(store.animState)]),
       undoStack: prev.undoStack.slice(0, -1),
     }));
     store.setAnimState(cloneAnimationState(previous));
@@ -62,7 +97,7 @@ export const createUndoRedoSlice: StateCreator<UndoRedoSlice, [], [], UndoRedoSl
     const store = get() as unknown as StoreState;
     const next = redoStack[redoStack.length - 1];
     set(prev => ({
-      undoStack: [...prev.undoStack, cloneAnimationState(store.animState)],
+      undoStack: trimHistory([...prev.undoStack, cloneAnimationState(store.animState)]),
       redoStack: prev.redoStack.slice(0, -1),
     }));
     store.setAnimState(cloneAnimationState(next));

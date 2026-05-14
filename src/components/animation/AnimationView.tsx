@@ -12,7 +12,7 @@ const PREVIEW_SIZE = 180; // preview canvas logical size
 
 function renderToCanvas(
   canvas: HTMLCanvasElement,
-  frame: Frame,
+  frame: Frame | undefined,
   gridSize: number,
   gridHeight: number,
   size: number,
@@ -32,6 +32,8 @@ function renderToCanvas(
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, size, size);
+
+  if (!frame) return;
 
   // checkerboard bg (dark theme friendly)
   const sq = Math.max(4, Math.round(size / maxSide / 2));
@@ -115,7 +117,7 @@ const FrameThumb = memo(({
 });
 
 // ─── Preview canvas ──────────────────────────────────────────
-const PreviewPanel = memo(({ frame, gridSize, gridHeight = gridSize }: { frame: Frame; gridSize: number; gridHeight?: number }) => {
+const PreviewPanel = memo(({ frame, gridSize, gridHeight = gridSize }: { frame: Frame | undefined; gridSize: number; gridHeight?: number }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     if (canvasRef.current) renderToCanvas(canvasRef.current, frame, gridSize, gridHeight, PREVIEW_SIZE);
@@ -135,21 +137,22 @@ const FullscreenPreview = memo(({ frames, gridSize, gridHeight = gridSize, onClo
   const [currentFrame, setCurrentFrame] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
   const timerRef = useRef<number | null>(null);
+  const safeCurrentFrame = Math.min(currentFrame, Math.max(0, frames.length - 1));
 
   // Render current frame
   useEffect(() => {
-    if (canvasRef.current) renderToCanvas(canvasRef.current, frames[currentFrame], gridSize, gridHeight, 400);
-  }, [currentFrame, frames, gridSize, gridHeight]);
+    if (canvasRef.current) renderToCanvas(canvasRef.current, frames[safeCurrentFrame], gridSize, gridHeight, 400);
+  }, [safeCurrentFrame, frames, gridSize, gridHeight]);
 
   // Auto-play
   useEffect(() => {
     if (!isPlaying || frames.length <= 1) return;
-    const duration = frames[currentFrame]?.duration ?? 100;
+    const duration = frames[safeCurrentFrame]?.duration ?? 100;
     timerRef.current = window.setTimeout(() => {
       setCurrentFrame(prev => (prev + 1) % frames.length);
     }, duration);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [isPlaying, currentFrame, frames]);
+  }, [isPlaying, safeCurrentFrame, frames]);
 
   // Close on Escape
   useEffect(() => {
@@ -179,7 +182,7 @@ const FullscreenPreview = memo(({ frames, gridSize, gridHeight = gridSize, onClo
           <button className="av-pb-btn" onClick={() => setCurrentFrame(p => Math.min(frames.length - 1, p + 1))} title="Next frame">
             <ChevronRight size={16} />
           </button>
-          <span className="av-fullscreen-frame-info">{currentFrame + 1} / {frames.length}</span>
+          <span className="av-fullscreen-frame-info">{safeCurrentFrame + 1} / {frames.length}</span>
           <button className="av-pb-btn av-fullscreen-close" onClick={onClose} title="Close (Esc)">
             <Minimize2 size={14} />
           </button>

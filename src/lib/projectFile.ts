@@ -19,6 +19,7 @@ export function serializeProject(
   animState: AnimationState,
   currentColor: string,
   currentTool: ToolType,
+  pretty = true,
 ): string {
   const data: ProjectData = {
     version: FILE_VERSION,
@@ -28,7 +29,7 @@ export function serializeProject(
     currentTool,
     savedAt: new Date().toISOString(),
   };
-  return JSON.stringify(data, null, 2);
+  return JSON.stringify(data, null, pretty ? 2 : 0);
 }
 
 export function deserializeProject(json: string): ProjectData {

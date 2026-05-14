@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import SplashScreen from './components/ui/SplashScreen.tsx'
+import AppErrorBoundary from './components/ui/AppErrorBoundary.tsx'
 
 const isStartupSplash = window.location.hash === '#splash';
 
@@ -22,7 +23,9 @@ createRoot(document.getElementById('root')!).render(
     {isStartupSplash ? (
       <SplashScreen standalone onComplete={completeStartupSplash} />
     ) : (
-      <App />
+      <AppErrorBoundary>
+        <App />
+      </AppErrorBoundary>
     )}
   </StrictMode>,
 )

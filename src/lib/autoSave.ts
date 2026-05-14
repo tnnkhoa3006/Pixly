@@ -28,6 +28,17 @@ async function ensureDir(dir: string) {
   }
 }
 
+async function getAutoSavePaths() {
+  const { join } = await import('@tauri-apps/api/path');
+  const dir = await getAutoSaveDir();
+  return {
+    dir,
+    slotA: await join(dir, AUTOSAVE_A),
+    slotB: await join(dir, AUTOSAVE_B),
+    meta: await join(dir, AUTOSAVE_META),
+  };
+}
+
 // ---------- Auto-save (Tauri: double-file, Web: localStorage) ----------
 
 export async function autoSaveProject(
@@ -37,28 +48,27 @@ export async function autoSaveProject(
   currentColor: string,
   currentTool: ToolType,
 ): Promise<void> {
-  const content = serializeProject(gridSize, gridHeight, animState, currentColor, currentTool);
+  const content = serializeProject(gridSize, gridHeight, animState, currentColor, currentTool, false);
 
   if (isTauri()) {
     try {
       const { writeTextFile, readTextFile, exists } = await import('@tauri-apps/plugin-fs');
-      const dir = await getAutoSaveDir();
-      await ensureDir(dir);
+      const paths = await getAutoSavePaths();
+      await ensureDir(paths.dir);
 
       let lastSlot: 'a' | 'b' = 'a';
-      const metaPath = dir + AUTOSAVE_META;
       try {
-        if (await exists(metaPath)) {
-          const meta = JSON.parse(await readTextFile(metaPath));
+        if (await exists(paths.meta)) {
+          const meta = JSON.parse(await readTextFile(paths.meta));
           lastSlot = meta.lastSlot === 'a' ? 'a' : 'b';
         }
       } catch { /* ignore corrupt meta */ }
 
       const writeSlot = lastSlot === 'a' ? 'b' : 'a';
-      const writeFile = writeSlot === 'a' ? AUTOSAVE_A : AUTOSAVE_B;
-      await writeTextFile(dir + writeFile, content);
+      const writePath = writeSlot === 'a' ? paths.slotA : paths.slotB;
+      await writeTextFile(writePath, content);
 
-      await writeTextFile(metaPath, JSON.stringify({ lastSlot: writeSlot, timestamp: Date.now() }));
+      await writeTextFile(paths.meta, JSON.stringify({ lastSlot: writeSlot, timestamp: Date.now() }));
     } catch (err) {
       console.error('Tauri auto-save failed:', err);
     }
@@ -75,18 +85,16 @@ export async function loadAutoSave(): Promise<ProjectData | null> {
   if (isTauri()) {
     try {
       const { readTextFile, exists } = await import('@tauri-apps/plugin-fs');
-      const dir = await getAutoSaveDir();
-      const metaPath = dir + AUTOSAVE_META;
+      const paths = await getAutoSavePaths();
 
-      if (!(await exists(metaPath))) return null;
+      if (!(await exists(paths.meta))) return null;
 
-      const meta = JSON.parse(await readTextFile(metaPath));
-      const primarySlot = meta.lastSlot === 'a' ? AUTOSAVE_A : AUTOSAVE_B;
-      const fallbackSlot = meta.lastSlot === 'a' ? AUTOSAVE_B : AUTOSAVE_A;
+      const meta = JSON.parse(await readTextFile(paths.meta));
+      const primarySlot = meta.lastSlot === 'a' ? paths.slotA : paths.slotB;
+      const fallbackSlot = meta.lastSlot === 'a' ? paths.slotB : paths.slotA;
 
-      for (const file of [primarySlot, fallbackSlot]) {
+      for (const path of [primarySlot, fallbackSlot]) {
         try {
-          const path = dir + file;
           if (await exists(path)) {
             const content = await readTextFile(path);
             return deserializeProject(content);
@@ -109,8 +117,8 @@ export async function hasAutoSave(): Promise<boolean> {
   if (isTauri()) {
     try {
       const { exists } = await import('@tauri-apps/plugin-fs');
-      const dir = await getAutoSaveDir();
-      return await exists(dir + AUTOSAVE_META);
+      const paths = await getAutoSavePaths();
+      return await exists(paths.meta);
     } catch { return false; }
   } else {
     return !!localStorage.getItem(AUTOSAVE_KEY);
@@ -121,9 +129,8 @@ export async function clearAutoSave(): Promise<void> {
   if (isTauri()) {
     try {
       const { remove, exists } = await import('@tauri-apps/plugin-fs');
-      const dir = await getAutoSaveDir();
-      for (const file of [AUTOSAVE_A, AUTOSAVE_B, AUTOSAVE_META]) {
-        const path = dir + file;
+      const paths = await getAutoSavePaths();
+      for (const path of [paths.slotA, paths.slotB, paths.meta]) {
         if (await exists(path)) await remove(path);
       }
     } catch { /* ignore */ }

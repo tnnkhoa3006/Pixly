@@ -17,13 +17,15 @@ import { useAppUpdater } from './useAppUpdater';
 import { useSidebarResize } from './useSidebarResize';
 import { APP_DISPLAY_VERSION, APP_NAME } from '../constants/appInfo';
 import { useStore } from '../store';
-import { cloneAnimationState } from '../store/slices/undoRedoSlice';
 import {
   isFrameTransformTool, buildTransformHud, clampScale, snapScale, wrapDegrees,
   type FrameTransformTool, type TransformSession, type TransformMetrics,
 } from '../lib/transformHelpers';
 import { hexToHsl, hslToHex } from '../lib/colorHelpers';
 import { PIXEL_FONT } from '../lib/pixelFont';
+
+const AUTOSAVE_IDLE_DELAY_MS = 3000;
+const AUTOSAVE_MAX_WAIT_MS = 12000;
 
 export function useCanvasApp() {
   // UI state from Zustand store
@@ -94,7 +96,17 @@ export function useCanvasApp() {
   const setCurrentFilePath = useStore(s => s.setCurrentFilePath);
   const isDirty = useStore(s => s.isDirty);
   const setIsDirty = useStore(s => s.setIsDirty);
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveMaxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveInFlightRef = useRef(false);
+  const autoSaveQueuedRef = useRef(false);
+  const autoSaveLatestRef = useRef<{
+    gridSize: number;
+    gridHeight: number;
+    animState: AnimationState;
+    currentColor: string;
+    currentTool: ToolType;
+  } | null>(null);
 
   const selection = useStore(s => s.selection);
   const setSelection = useStore(s => s.setSelection);
@@ -416,25 +428,8 @@ export function useCanvasApp() {
     return { ...transform, scale: animationMode ? clampScale(transform.scale * metrics.scaleFactor) : snapScale(transform.scale * metrics.scaleFactor) };
   }, [animationMode]);
 
-  const handleUndo = useCallback(() => {
-    if (undoStack.length === 0) return;
-    const previous = undoStack[undoStack.length - 1];
-    setRedoStack((prev: AnimationState[]) => [...prev, cloneAnimationState(animState)]);
-    setUndoStack((prev: AnimationState[]) => prev.slice(0, -1));
-    setAnimState(cloneAnimationState(previous));
-  }, [animState, cloneAnimationState, undoStack, setRedoStack, setUndoStack]);
-
-  const handleRedo = useCallback(() => {
-    if (redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
-    setUndoStack((prev: AnimationState[]) => {
-      const updated = [...prev, cloneAnimationState(animState)];
-      if (updated.length > 50) updated.shift();
-      return updated;
-    });
-    setRedoStack((prev: AnimationState[]) => prev.slice(0, -1));
-    setAnimState(cloneAnimationState(next));
-  }, [animState, cloneAnimationState, redoStack, setUndoStack, setRedoStack]);
+  const handleUndo = useStore(s => s.handleUndo);
+  const handleRedo = useStore(s => s.handleRedo);
 
   const handleAddFrame = useStore(s => s.handleAddFrame);
   const handleDuplicateFrame = useStore(s => s.handleDuplicateFrame);
@@ -577,12 +572,89 @@ export function useCanvasApp() {
     addRecentFile(filePath, data.canvas.width, data.canvas.height ?? data.canvas.width);
   };
 
+  const clearAutoSaveTimers = useCallback(() => {
+    if (autoSaveIdleTimerRef.current) {
+      clearTimeout(autoSaveIdleTimerRef.current);
+      autoSaveIdleTimerRef.current = null;
+    }
+    if (autoSaveMaxTimerRef.current) {
+      clearTimeout(autoSaveMaxTimerRef.current);
+      autoSaveMaxTimerRef.current = null;
+    }
+  }, []);
+
+  const runAutoSaveNow = useCallback(async () => {
+    clearAutoSaveTimers();
+
+    if (autoSaveInFlightRef.current) {
+      autoSaveQueuedRef.current = true;
+      return;
+    }
+
+    autoSaveInFlightRef.current = true;
+    try {
+      do {
+        autoSaveQueuedRef.current = false;
+        const payload = autoSaveLatestRef.current;
+        if (!payload) return;
+        await autoSaveProject(
+          payload.gridSize,
+          payload.gridHeight,
+          payload.animState,
+          payload.currentColor,
+          payload.currentTool,
+        );
+      } while (autoSaveQueuedRef.current);
+    } finally {
+      autoSaveInFlightRef.current = false;
+    }
+  }, [clearAutoSaveTimers]);
+
+  const scheduleAutoSave = useCallback(() => {
+    if (autoSaveIdleTimerRef.current) clearTimeout(autoSaveIdleTimerRef.current);
+    autoSaveIdleTimerRef.current = setTimeout(() => {
+      void runAutoSaveNow();
+    }, AUTOSAVE_IDLE_DELAY_MS);
+
+    if (!autoSaveMaxTimerRef.current) {
+      autoSaveMaxTimerRef.current = setTimeout(() => {
+        void runAutoSaveNow();
+      }, AUTOSAVE_MAX_WAIT_MS);
+    }
+  }, [runAutoSaveNow]);
+
   useEffect(() => {
-    if (showWelcome) return;
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => { autoSaveProject(gridSize, gridHeight, animState, currentColor, currentTool).catch(console.error); }, 5000);
-    return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [animState, gridSize, gridHeight, currentColor, currentTool, showWelcome]);
+    if (showWelcome) {
+      autoSaveLatestRef.current = null;
+      clearAutoSaveTimers();
+      return;
+    }
+
+    autoSaveLatestRef.current = { gridSize, gridHeight, animState, currentColor, currentTool };
+    scheduleAutoSave();
+  }, [animState, gridSize, gridHeight, currentColor, currentTool, showWelcome, clearAutoSaveTimers, scheduleAutoSave]);
+
+  useEffect(() => () => clearAutoSaveTimers(), [clearAutoSaveTimers]);
+
+  useEffect(() => {
+    const flushAutoSave = () => {
+      if (autoSaveLatestRef.current) void runAutoSaveNow();
+    };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flushAutoSave();
+    };
+
+    window.addEventListener('pagehide', flushAutoSave);
+    window.addEventListener('error', flushAutoSave);
+    window.addEventListener('unhandledrejection', flushAutoSave);
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', flushAutoSave);
+      window.removeEventListener('error', flushAutoSave);
+      window.removeEventListener('unhandledrejection', flushAutoSave);
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+    };
+  }, [runAutoSaveNow]);
 
   useEffect(() => {
     if (showWelcome || !activeTabId) return;
