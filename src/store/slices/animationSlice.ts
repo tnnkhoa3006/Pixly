@@ -19,7 +19,7 @@ export interface AnimationSlice {
 
   // Layer operations
   toggleLayerVisibility: (id: string) => void;
-  addLayer: (layerCount: number, gridSize: number) => void;
+  addLayer: (layerCount: number, gridSize: number, gridHeight?: number) => void;
   deleteLayer: (id: string) => void;
   renameLayer: (id: string, name: string) => void;
   toggleLayerSelection: (id: string) => void;
@@ -125,7 +125,7 @@ export const createAnimationSlice: StateCreator<AnimationSlice, [], [], Animatio
     });
   },
 
-  addLayer: (layerCount, gridSize) => {
+  addLayer: (layerCount, gridSize, gridHeight = gridSize) => {
     pushUndo();
     set(prev => {
       const nextLayers = [...prev.animState.frames[prev.animState.activeFrameIndex].layers, {
@@ -133,7 +133,7 @@ export const createAnimationSlice: StateCreator<AnimationSlice, [], [], Animatio
         name: `Layer ${layerCount + 1}`,
         visible: true,
         opacity: 1,
-        grid: createEmptyGrid(gridSize),
+        grid: createEmptyGrid(gridSize, gridHeight),
         transform: createDefaultTransform(),
       }];
       const frame = { ...prev.animState.frames[prev.animState.activeFrameIndex], layers: nextLayers };

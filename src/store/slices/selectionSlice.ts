@@ -30,7 +30,7 @@ export const createSelectionSlice: StateCreator<SelectionSlice, [], [], Selectio
     const { selection } = get();
     if (!selection) return;
     const store = get() as unknown as StoreState;
-    const { gridSize, setAnimState } = store;
+    const { setAnimState } = store;
     const { x, y, width, height, pixels, offsetX, offsetY } = selection;
     const placeX = x + offsetX;
     const placeY = y + offsetY;
@@ -42,12 +42,14 @@ export const createSelectionSlice: StateCreator<SelectionSlice, [], [], Selectio
       const layerIdx = newLayers.findIndex((l: any) => l.id === prev.activeLayerId);
       if (layerIdx === -1) return prev;
       const al = { ...newLayers[layerIdx] };
+      const gridHeight = al.grid.length;
+      const gridWidth = al.grid[0]?.length ?? 0;
       const newGrid = al.grid.map((row: any) => [...row]);
       for (let row = 0; row < height; row++) {
         for (let col = 0; col < width; col++) {
           const gx = placeX + col;
           const gy = placeY + row;
-          if (gx < 0 || gx >= gridSize || gy < 0 || gy >= gridSize) continue;
+          if (gx < 0 || gx >= gridWidth || gy < 0 || gy >= gridHeight) continue;
           const pixel = pixels[row]?.[col];
           if (pixel !== null) newGrid[gy][gx] = pixel;
         }

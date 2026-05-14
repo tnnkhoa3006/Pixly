@@ -14,10 +14,16 @@ function renderToCanvas(
   canvas: HTMLCanvasElement,
   frame: Frame,
   gridSize: number,
+  gridHeight: number,
   size: number,
 ) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
+  const maxSide = Math.max(gridSize, gridHeight);
+  const drawW = (gridSize / maxSide) * size;
+  const drawH = (gridHeight / maxSide) * size;
+  const offsetX = (size - drawW) / 2;
+  const offsetY = (size - drawH) / 2;
   const ratio = window.devicePixelRatio || 1;
   canvas.width = Math.round(size * ratio);
   canvas.height = Math.round(size * ratio);
@@ -28,7 +34,7 @@ function renderToCanvas(
   ctx.clearRect(0, 0, size, size);
 
   // checkerboard bg (dark theme friendly)
-  const sq = Math.max(4, Math.round(size / gridSize / 2));
+  const sq = Math.max(4, Math.round(size / maxSide / 2));
   for (let row = 0; row < Math.ceil(size / sq); row++) {
     for (let col = 0; col < Math.ceil(size / sq); col++) {
       ctx.fillStyle = (row + col) % 2 === 0 ? '#2a2a3e' : '#22223a';
@@ -36,25 +42,28 @@ function renderToCanvas(
     }
   }
 
-  const ps = size / gridSize;
+  const ps = size / maxSide;
   for (const layer of frame.layers) {
     if (!layer.visible) continue;
     ctx.save();
     ctx.globalAlpha = layer.opacity;
+    ctx.translate(offsetX, offsetY);
     ctx.translate(layer.transform.x * ps, layer.transform.y * ps);
     if (layer.transform.rotation !== 0) {
-      const c = size / 2;
-      ctx.translate(c, c);
+      const cx = drawW / 2;
+      const cy = drawH / 2;
+      ctx.translate(cx, cy);
       ctx.rotate((layer.transform.rotation * Math.PI) / 180);
-      ctx.translate(-c, -c);
+      ctx.translate(-cx, -cy);
     }
     if (layer.transform.scale !== 1) {
-      const c = size / 2;
-      ctx.translate(c, c);
+      const cx = drawW / 2;
+      const cy = drawH / 2;
+      ctx.translate(cx, cy);
       ctx.scale(layer.transform.scale, layer.transform.scale);
-      ctx.translate(-c, -c);
+      ctx.translate(-cx, -cy);
     }
-    for (let y = 0; y < gridSize; y++) {
+    for (let y = 0; y < gridHeight; y++) {
       for (let x = 0; x < gridSize; x++) {
         const color = layer.grid[y]?.[x];
         if (color) {
@@ -69,10 +78,10 @@ function renderToCanvas(
 
 // ─── Frame thumbnail ─────────────────────────────────────────
 const FrameThumb = memo(({
-  frame, index, isActive, gridSize, isDragging, dropTarget, draggable, compact,
+  frame, index, isActive, gridSize, gridHeight = gridSize, isDragging, dropTarget, draggable, compact,
   onClick, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd,
 }: {
-  frame: Frame; index: number; isActive: boolean; gridSize: number;
+  frame: Frame; index: number; isActive: boolean; gridSize: number; gridHeight?: number;
   isDragging: boolean; dropTarget: 'left' | 'right' | null; draggable: boolean;
   compact: boolean;
   onClick: () => void;
@@ -84,8 +93,8 @@ const FrameThumb = memo(({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    if (!compact && canvasRef.current) renderToCanvas(canvasRef.current, frame, gridSize, THUMB_W);
-  }, [frame, gridSize, compact]);
+    if (!compact && canvasRef.current) renderToCanvas(canvasRef.current, frame, gridSize, gridHeight, THUMB_W);
+  }, [frame, gridSize, gridHeight, compact]);
 
   return (
     <div
@@ -106,11 +115,11 @@ const FrameThumb = memo(({
 });
 
 // ─── Preview canvas ──────────────────────────────────────────
-const PreviewPanel = memo(({ frame, gridSize }: { frame: Frame; gridSize: number }) => {
+const PreviewPanel = memo(({ frame, gridSize, gridHeight = gridSize }: { frame: Frame; gridSize: number; gridHeight?: number }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
-    if (canvasRef.current) renderToCanvas(canvasRef.current, frame, gridSize, PREVIEW_SIZE);
-  }, [frame, gridSize]);
+    if (canvasRef.current) renderToCanvas(canvasRef.current, frame, gridSize, gridHeight, PREVIEW_SIZE);
+  }, [frame, gridSize, gridHeight]);
   return (
     <div className="av-preview-wrap">
       <canvas ref={canvasRef} className="av-preview-canvas" />
@@ -119,8 +128,8 @@ const PreviewPanel = memo(({ frame, gridSize }: { frame: Frame; gridSize: number
 });
 
 // ─── Fullscreen Preview Popup ─────────────────────────────────
-const FullscreenPreview = memo(({ frames, gridSize, onClose }: {
-  frames: Frame[]; gridSize: number; onClose: () => void;
+const FullscreenPreview = memo(({ frames, gridSize, gridHeight = gridSize, onClose }: {
+  frames: Frame[]; gridSize: number; gridHeight?: number; onClose: () => void;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [currentFrame, setCurrentFrame] = useState(0);
@@ -129,8 +138,8 @@ const FullscreenPreview = memo(({ frames, gridSize, onClose }: {
 
   // Render current frame
   useEffect(() => {
-    if (canvasRef.current) renderToCanvas(canvasRef.current, frames[currentFrame], gridSize, 400);
-  }, [currentFrame, frames, gridSize]);
+    if (canvasRef.current) renderToCanvas(canvasRef.current, frames[currentFrame], gridSize, gridHeight, 400);
+  }, [currentFrame, frames, gridSize, gridHeight]);
 
   // Auto-play
   useEffect(() => {
@@ -183,12 +192,14 @@ const FullscreenPreview = memo(({ frames, gridSize, onClose }: {
 // ─── Main AnimationView ──────────────────────────────────────
 interface AnimationViewProps {
   gridSize: number;
+  gridHeight?: number;
   isPlaying: boolean;
   onTogglePlay: () => void;
 }
 
 export default function AnimationView({
   gridSize,
+  gridHeight = gridSize,
   isPlaying,
   onTogglePlay,
 }: AnimationViewProps) {
@@ -316,7 +327,7 @@ export default function AnimationView({
 
         {/* Preview + playback */}
         <div className="av-preview-col">
-          <PreviewPanel frame={activeFrame} gridSize={gridSize} />
+          <PreviewPanel frame={activeFrame} gridSize={gridSize} gridHeight={gridHeight} />
 
           {/* Playback controls */}
           <div className="av-playback">
@@ -385,6 +396,7 @@ export default function AnimationView({
               index={i}
               isActive={i === activeFrameIndex}
               gridSize={gridSize}
+              gridHeight={gridHeight}
               isDragging={draggedIndex === i}
               dropTarget={dropTargetIndex === i ? dropPosition : null}
               draggable={!isPlaying && frames.length > 1}
@@ -508,6 +520,7 @@ export default function AnimationView({
         <FullscreenPreview
           frames={frames}
           gridSize={gridSize}
+          gridHeight={gridHeight}
           onClose={() => setShowFullscreen(false)}
         />
       )}

@@ -5,6 +5,7 @@ export type PreviewTool = 'line' | 'rect' | 'circle' | 'select' | null;
 
 interface PreviewCanvasProps {
   gridSize: number;
+  gridHeight?: number;
   pixelSize: number;
   brushSize: number;
 }
@@ -15,7 +16,7 @@ export interface PreviewCanvasHandle {
   clear: () => void;
 }
 
-const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gridSize, pixelSize, brushSize }, ref) => {
+const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gridSize, gridHeight = gridSize, pixelSize, brushSize }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
@@ -24,7 +25,7 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
     if (!canvas) return;
 
     const logicalWidth = gridSize * pixelSize;
-    const logicalHeight = gridSize * pixelSize;
+    const logicalHeight = gridHeight * pixelSize;
     const ratio = window.devicePixelRatio || 1;
     
     canvas.width = Math.round(logicalWidth * ratio);
@@ -40,7 +41,7 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
     ctx.scale(ratio, ratio);
     ctx.imageSmoothingEnabled = false;
     
-  }, [gridSize, pixelSize]);
+  }, [gridSize, gridHeight, pixelSize]);
 
   useImperativeHandle(ref, () => ({
     drawPreview: (tool: PreviewTool, startX: number, startY: number, endX: number, endY: number, color: string | null) => {
@@ -48,7 +49,7 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
       if (!ctx) return;
 
       const logicalWidth = gridSize * pixelSize;
-      const logicalHeight = gridSize * pixelSize;
+      const logicalHeight = gridHeight * pixelSize;
       ctx.clearRect(0, 0, logicalWidth, logicalHeight);
 
       if (!tool || !color) return;
@@ -63,13 +64,13 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
             for (let dx = startOffset; dx <= endOffset; dx++) {
               const nx = x + dx;
               const ny = y + dy;
-              if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize) {
+              if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridHeight) {
                 ctx.fillRect(nx * pixelSize, ny * pixelSize, pixelSize, pixelSize);
               }
             }
           }
         } else {
-          if (x < 0 || x >= gridSize || y < 0 || y >= gridSize) return;
+          if (x < 0 || x >= gridSize || y < 0 || y >= gridHeight) return;
           ctx.fillRect(x * pixelSize, y * pixelSize, pixelSize, pixelSize);
         }
       };
@@ -87,7 +88,7 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
         const minX = Math.max(0, Math.min(startX, endX));
         const maxX = Math.min(gridSize - 1, Math.max(startX, endX));
         const minY = Math.max(0, Math.min(startY, endY));
-        const maxY = Math.min(gridSize - 1, Math.max(startY, endY));
+        const maxY = Math.min(gridHeight - 1, Math.max(startY, endY));
         
         ctx.strokeStyle = 'rgba(0,0,0,0.8)';
         ctx.setLineDash([4, 4]);
@@ -107,7 +108,7 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
       if (!ctx) return;
 
       const logicalWidth = gridSize * pixelSize;
-      const logicalHeight = gridSize * pixelSize;
+      const logicalHeight = gridHeight * pixelSize;
       ctx.clearRect(0, 0, logicalWidth, logicalHeight);
       if (points.length === 0) return;
 
@@ -134,7 +135,7 @@ const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(({ gri
       const ctx = ctxRef.current;
       if (!ctx) return;
       const logicalWidth = gridSize * pixelSize;
-      const logicalHeight = gridSize * pixelSize;
+      const logicalHeight = gridHeight * pixelSize;
       ctx.clearRect(0, 0, logicalWidth, logicalHeight);
     }
   }));

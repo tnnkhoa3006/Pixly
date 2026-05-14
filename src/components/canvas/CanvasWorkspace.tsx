@@ -29,6 +29,7 @@ interface CanvasWorkspaceProps {
   hoverOverlayRef: React.RefObject<HTMLDivElement | null>;
   hoverCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   gridSize: number;
+  gridHeight: number;
   pixelSize: number;
   showGrid: boolean;
   brushSize: number;
@@ -37,7 +38,8 @@ interface CanvasWorkspaceProps {
   visibleTransformHud: TransformHudData | null;
   selection: SelectionState | null;
   currentTool: string;
-  transformGuideSize: number;
+  transformGuideWidth: number;
+  transformGuideHeight: number;
   getForwardCssTransform: () => string;
   showTransformGuides: boolean;
   transformGuideLayers: TransformGuideLayer[];
@@ -60,9 +62,9 @@ interface CanvasWorkspaceProps {
 export default memo(function CanvasWorkspace({
   containerRef, canvasRef, previewCanvasRef, transformContainerRef,
   hoverOverlayRef, hoverCanvasRef,
-  gridSize, pixelSize, showGrid, brushSize, canvasCursor,
+  gridSize, gridHeight, pixelSize, showGrid, brushSize, canvasCursor,
   frameTransformTool, visibleTransformHud, selection, currentTool,
-  transformGuideSize, getForwardCssTransform, showTransformGuides, transformGuideLayers, activeLayerId,
+  transformGuideWidth, transformGuideHeight, getForwardCssTransform, showTransformGuides, transformGuideLayers, activeLayerId,
   selectionCopy, selectionPaste, selectionCut, selectionNewBrush, selectionFlipH, selectionFlipV, selectionDelete,
   onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onPointerLeave, onLostPointerCapture,
 }: CanvasWorkspaceProps) {
@@ -115,16 +117,16 @@ export default memo(function CanvasWorkspace({
         )}
 
         <div ref={transformContainerRef} style={{ position: 'absolute', top: 0, left: 0, transformOrigin: '0 0', overflow: 'visible' }}>
-          <Canvas ref={canvasRef} gridSize={gridSize} pixelSize={pixelSize} showGrid={showGrid} />
+          <Canvas ref={canvasRef} gridSize={gridSize} gridHeight={gridHeight} pixelSize={pixelSize} showGrid={showGrid} />
           <div style={{
             position: 'absolute', top: 0, left: 0,
-            width: `${transformGuideSize}px`,
-            height: `${transformGuideSize}px`,
+            width: `${transformGuideWidth}px`,
+            height: `${transformGuideHeight}px`,
             transformOrigin: 'center',
             transform: getForwardCssTransform(),
             pointerEvents: 'none'
           }}>
-            <PreviewCanvas ref={previewCanvasRef} gridSize={gridSize} pixelSize={pixelSize} brushSize={brushSize} />
+            <PreviewCanvas ref={previewCanvasRef} gridSize={gridSize} gridHeight={gridHeight} pixelSize={pixelSize} brushSize={brushSize} />
             <div ref={hoverOverlayRef} style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', display: 'none', boxSizing: 'border-box' }}>
               <canvas ref={hoverCanvasRef} style={{ width: '100%', height: '100%', imageRendering: 'pixelated', opacity: 0.6, display: 'none' }} />
             </div>
@@ -183,7 +185,7 @@ export default memo(function CanvasWorkspace({
           {showTransformGuides && (
             <div
               className="transform-guide-overlay"
-              style={{ width: `${transformGuideSize}px`, height: `${transformGuideSize}px` }}
+              style={{ width: `${transformGuideWidth}px`, height: `${transformGuideHeight}px` }}
             >
               {transformGuideLayers.map(layer => {
                 const isActiveGuide = layer.id === activeLayerId;
@@ -195,8 +197,8 @@ export default memo(function CanvasWorkspace({
                     key={layer.id}
                     className={`transform-guide ${isActiveGuide ? 'active' : ''} ${layer.visible ? '' : 'hidden-layer'}`}
                     style={{
-                      width: `${transformGuideSize}px`,
-                      height: `${transformGuideSize}px`,
+                      width: `${transformGuideWidth}px`,
+                      height: `${transformGuideHeight}px`,
                       transformOrigin: 'center',
                       transform: `translate(${layer.transform.x * pixelSize}px, ${layer.transform.y * pixelSize}px) rotate(${layer.transform.rotation}deg) scale(${layer.transform.scale})`,
                     }}

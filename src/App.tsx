@@ -39,7 +39,12 @@ export default function App() {
 
       {l.animationTabPinned && l.activeView === 'animation' && (
         <div className="animation-view">
-          <AnimationView gridSize={app.animation.gridSize} isPlaying={app.animation.isPlaying} onTogglePlay={app.animation.onTogglePlay} />
+          <AnimationView
+            gridSize={app.animation.gridSize}
+            gridHeight={app.animation.gridHeight}
+            isPlaying={app.animation.isPlaying}
+            onTogglePlay={app.animation.onTogglePlay}
+          />
         </div>
       )}
 

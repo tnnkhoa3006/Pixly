@@ -18,6 +18,8 @@ const SIZE_PRESETS: { size: number; label: string }[] = [
   { size: 64, label: '64' },
   { size: 128, label: '128' },
 ];
+const MAX_SIZE = 1024;
+const MAX_AREA = 1024 * 1024;
 
 export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProject, onContinue }: WelcomeScreenProps) {
   const [hasAuto, setHasAuto] = useState(false);
@@ -26,7 +28,9 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
   const [loading, setLoading] = useState(true);
   const [selectedPreset, setSelectedPreset] = useState(32);
   const [isCustom, setIsCustom] = useState(false);
-  const [customSize, setCustomSize] = useState('64');
+  const [customWidth, setCustomWidth] = useState('200');
+  const [customHeight, setCustomHeight] = useState('300');
+  const [customError, setCustomError] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -52,24 +56,45 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
     if (data) onContinue(data);
   };
 
-  const handleOpen = async () => {
+  const handleOpen = useCallback(async () => {
     try {
       const result = await openProjectFile();
       if (result) onLoadProject(result.data, result.filePath);
     } catch (err) {
       alert(`Error opening file: ${(err as Error).message}`);
     }
-  };
+  }, [onLoadProject]);
 
-  const getGridSize = (): number => {
-    if (isCustom) {
-      const parsed = parseInt(customSize, 10);
-      return Math.max(1, Math.min(512, isNaN(parsed) ? 64 : parsed));
+  const getGridSize = (): GridSizeType | null => {
+    if (!isCustom) return selectedPreset;
+
+    const width = parseInt(customWidth, 10);
+    const height = parseInt(customHeight, 10);
+    if (isNaN(width) || isNaN(height) || width < 1 || height < 1) {
+      setCustomError('Enter a valid width and height');
+      return null;
     }
-    return selectedPreset;
+    if (width > MAX_SIZE || height > MAX_SIZE) {
+      setCustomError(`Max side is ${MAX_SIZE}px`);
+      return null;
+    }
+    if (width * height > MAX_AREA) {
+      setCustomError(`Max canvas area is ${MAX_AREA.toLocaleString()} pixels`);
+      return null;
+    }
+    setCustomError('');
+    return { width, height };
   };
 
-  const handleNewProject = useCallback(() => onNewProject(getGridSize()), [isCustom, customSize, selectedPreset]);
+  const handleNewProject = useCallback(() => {
+    const size = getGridSize();
+    if (size) onNewProject(size);
+  }, [isCustom, customWidth, customHeight, selectedPreset, onNewProject]);
+
+  const handleNewAnimation = useCallback(() => {
+    const size = getGridSize();
+    if (size) onNewAnimation(size);
+  }, [isCustom, customWidth, customHeight, selectedPreset, onNewAnimation]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -98,7 +123,6 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
   return (
     <div className="welcome-screen">
       <div className="welcome-layout">
-        {/* LEFT SIDEBAR */}
         <div className="welcome-sidebar">
           <div className="welcome-sidebar-top">
             {hasAuto && (
@@ -111,12 +135,12 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
               </button>
             )}
 
-            <button className="welcome-sidebar-btn" onClick={() => onNewProject(getGridSize())}>
+            <button className="welcome-sidebar-btn" onClick={handleNewProject}>
               <Paintbrush size={14} className="welcome-sidebar-icon" />
               <span className="welcome-sidebar-label">New Sprite</span>
             </button>
 
-            <button className="welcome-sidebar-btn" onClick={() => onNewAnimation(getGridSize())}>
+            <button className="welcome-sidebar-btn" onClick={handleNewAnimation}>
               <Film size={14} className="welcome-sidebar-icon" />
               <span className="welcome-sidebar-label">New Animation</span>
             </button>
@@ -126,7 +150,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
             <button className="welcome-sidebar-btn" onClick={handleOpen}>
               <FolderOpen size={14} className="welcome-sidebar-icon" />
               <span className="welcome-sidebar-label">Open File</span>
-              <span className="welcome-sidebar-hint">⌘O</span>
+              <span className="welcome-sidebar-hint">Ctrl+O</span>
             </button>
           </div>
 
@@ -145,7 +169,6 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
           </div>
         </div>
 
-        {/* CENTER */}
         <div className="welcome-center">
           <div className="welcome-center-brand">
             <img src="/pixly-icon.png" alt="Pixly" className="welcome-center-logo" />
@@ -164,7 +187,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
               <button
                 key={size}
                 className={`welcome-preset ${!isCustom && selectedPreset === size ? 'active' : ''}`}
-                onClick={() => { setSelectedPreset(size); setIsCustom(false); }}
+                onClick={() => { setSelectedPreset(size); setIsCustom(false); setCustomError(''); }}
               >
                 {label}
               </button>
@@ -172,6 +195,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
             <button
               className={`welcome-preset ${isCustom ? 'active' : ''}`}
               onClick={() => setIsCustom(true)}
+              title="Custom size"
             >
               <Grid3X3 size={12} />
             </button>
@@ -182,27 +206,37 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
               <input
                 type="number"
                 className="welcome-custom-input"
-                value={customSize}
-                onChange={(e) => setCustomSize(e.target.value)}
+                value={customWidth}
+                onChange={(e) => { setCustomWidth(e.target.value); setCustomError(''); }}
                 min={1}
-                max={512}
-                placeholder="Size"
+                max={MAX_SIZE}
+                placeholder="W"
               />
-              <span className="welcome-custom-label">px × px</span>
+              <span className="welcome-custom-label">x</span>
+              <input
+                type="number"
+                className="welcome-custom-input"
+                value={customHeight}
+                onChange={(e) => { setCustomHeight(e.target.value); setCustomError(''); }}
+                min={1}
+                max={MAX_SIZE}
+                placeholder="H"
+              />
+              <span className="welcome-custom-label">px</span>
+              {customError && <span className="welcome-custom-error">{customError}</span>}
             </div>
           )}
 
           <div className="welcome-center-actions">
-            <button className="welcome-center-btn" onClick={() => onNewProject(getGridSize())}>
+            <button className="welcome-center-btn" onClick={handleNewProject}>
               <Paintbrush size={16} /> New Sprite
             </button>
-            <button className="welcome-center-btn welcome-center-btn-secondary" onClick={() => onNewAnimation(getGridSize())}>
+            <button className="welcome-center-btn welcome-center-btn-secondary" onClick={handleNewAnimation}>
               <Film size={16} /> New Animation
             </button>
           </div>
         </div>
 
-        {/* RIGHT - Recent Projects */}
         <div className="welcome-recent">
           <div className="welcome-recent-header">
             <Clock size={12} />
@@ -239,7 +273,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
                   <div className="welcome-recent-info">
                     <div className="welcome-recent-name">{file.name}</div>
                     <div className="welcome-recent-meta">
-                      {file.canvasSize} · {new Date(file.timestamp).toLocaleDateString()}
+                      {file.canvasSize} - {new Date(file.timestamp).toLocaleDateString()}
                     </div>
                   </div>
                   <MoreHorizontal size={14} className="welcome-recent-more" />
@@ -251,8 +285,8 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
       </div>
 
       <div className="welcome-footer">
-        <span>{APP_DISPLAY_VERSION} · Built with ❤ and Tauri</span>
-        <span className="welcome-footer-hint">Press Enter to create · Ctrl+O to open</span>
+        <span>{APP_DISPLAY_VERSION} - Built with Tauri</span>
+        <span className="welcome-footer-hint">Press Enter to create - Ctrl+O to open</span>
       </div>
     </div>
   );

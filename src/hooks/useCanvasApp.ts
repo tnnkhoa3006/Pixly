@@ -74,143 +74,12 @@ export function useCanvasApp() {
   const pixelSize = useStore(s => s.pixelSize);
   const setPixelSize = useStore(s => s.setPixelSize);
 
-  const [gridSize, setGridSize] = useState<GridSizeType>(16);
+  const [gridSize, setGridSize] = useState(16);
+  const [gridHeight, setGridHeight] = useState(16);
   const [showExportFrameDialog, setShowExportFrameDialog] = useState(false);
   const [isExportingGif, setIsExportingGif] = useState(false);
 
-  const getGifExportScale = (size: number) => Math.max(1, Math.min(8, Math.floor(1200 / Math.max(1, size))));
-
-  // Tab management
-  const tabs = useStore(s => s.tabs);
-  const setTabs = useStore(s => s.setTabs);
-  const activeTabId = useStore(s => s.activeTabId);
-  const setActiveTabId = useStore(s => s.setActiveTabId);
-
-  const switchToTab = useCallback((tabId: string) => {
-    if (tabId === activeTabId) return;
-    setTabs(prev => prev.map(t => {
-      if (t.id !== activeTabId) return t;
-      return { ...t, pan: { ...panRef.current }, pixelSize: pixelSizeRef.current };
-    }));
-    setTabs(prev => {
-      const target = prev.find(t => t.id === tabId);
-      if (!target) return prev;
-      setGridSize(target.gridSize);
-      setPixelSize(target.pixelSize);
-      setAnimState(target.animState);
-      setCurrentColor(target.currentColor);
-      setCurrentTool(target.currentTool);
-      setUndoStack(target.undoStack);
-      setRedoStack(target.redoStack);
-      setCurrentFilePath(target.filePath);
-      setIsDirty(target.isDirty);
-      panRef.current = { ...target.pan };
-      hasCentered.current = target.pan.x !== 0 || target.pan.y !== 0;
-      if (transformContainerRef.current) {
-        transformContainerRef.current.style.transform = `translate(${target.pan.x}px, ${target.pan.y}px)`;
-      }
-      return prev;
-    });
-    setActiveTabId(tabId);
-    setSelection(null);
-  }, [activeTabId]);
-
-  const openFileAsTab = useCallback(async (filePath?: string) => {
-    try {
-      let data: ProjectData;
-      let resolvedPath: string;
-      if (filePath) {
-        const { readTextFile } = await import('@tauri-apps/plugin-fs');
-        const content = await readTextFile(filePath);
-        data = deserializeProject(content);
-        resolvedPath = filePath;
-      } else {
-        const result = await openProjectFile();
-        if (!result) return;
-        data = result.data;
-        resolvedPath = result.filePath;
-      }
-      setTabs(prev => {
-        const existing = prev.find(t => t.filePath === resolvedPath);
-        if (existing) { setActiveTabId(existing.id); return prev; }
-        const newTab = tabFromProjectData(data, resolvedPath);
-        addRecentFile(resolvedPath, data.canvas.width);
-        setGridSize(newTab.gridSize);
-        setPixelSize(newTab.pixelSize);
-        setAnimState(newTab.animState);
-        setCurrentColor(newTab.currentColor);
-        setCurrentTool(newTab.currentTool);
-        setUndoStack([]);
-        setRedoStack([]);
-        setCurrentFilePath(newTab.filePath);
-        setIsDirty(false);
-        panRef.current = { x: 0, y: 0 };
-        hasCentered.current = false;
-        setActiveTabId(newTab.id);
-        return [...prev, newTab];
-      });
-    } catch (err) {
-      alert(`Open failed: ${(err as Error).message}`);
-    }
-  }, []);
-
-  const addNewTab = useCallback((size: GridSizeType = 32, name = 'Untitled') => {
-    const newTab = createNewTab(size, name);
-    setTabs(prev => {
-      const flushed = prev.map(t => {
-        if (t.id !== activeTabId) return t;
-        return { ...t, pan: { ...panRef.current }, pixelSize: pixelSizeRef.current };
-      });
-      return [...flushed, newTab];
-    });
-    setGridSize(newTab.gridSize);
-    setPixelSize(newTab.pixelSize);
-    setAnimState(newTab.animState);
-    setCurrentColor(newTab.currentColor);
-    setCurrentTool(newTab.currentTool);
-    setUndoStack([]);
-    setRedoStack([]);
-    setCurrentFilePath(null);
-    setIsDirty(false);
-    panRef.current = { x: 0, y: 0 };
-    hasCentered.current = false;
-    setActiveTabId(newTab.id);
-    setSelection(null);
-  }, [activeTabId]);
-
-  const performCloseTab = useCallback((tabId: string) => {
-    setTabs(prev => {
-      const next = prev.filter(t => t.id !== tabId);
-      if (next.length === 0) { setShowWelcome(true); return next; }
-      if (tabId === activeTabId) {
-        const idx = prev.findIndex(t => t.id === tabId);
-        const target = next[Math.min(idx, next.length - 1)];
-        setGridSize(target.gridSize);
-        setPixelSize(target.pixelSize);
-        setAnimState(target.animState);
-        setCurrentColor(target.currentColor);
-        setCurrentTool(target.currentTool);
-        setUndoStack(target.undoStack);
-        setRedoStack(target.redoStack);
-        setCurrentFilePath(target.filePath);
-        setIsDirty(target.isDirty);
-        panRef.current = { ...target.pan };
-        hasCentered.current = target.pan.x !== 0 || target.pan.y !== 0;
-        if (transformContainerRef.current) {
-          transformContainerRef.current.style.transform = `translate(${target.pan.x}px, ${target.pan.y}px)`;
-        }
-        setActiveTabId(target.id);
-        setSelection(null);
-      }
-      return next;
-    });
-  }, [activeTabId]);
-
-  const closeTab = useCallback((tabId: string) => {
-    const tab = tabs.find(t => t.id === tabId);
-    if (tab?.isDirty) { setSaveConfirmTabId(tabId); }
-    else { performCloseTab(tabId); }
-  }, [tabs, performCloseTab]);
+  const getGifExportScale = (width: number, height: number = width) => Math.max(1, Math.min(8, Math.floor(1200 / Math.max(1, width, height))));
 
   const saveConfirmTabId = useStore(s => s.saveConfirmTabId);
   const setSaveConfirmTabId = useStore(s => s.setSaveConfirmTabId);
@@ -220,11 +89,6 @@ export function useCanvasApp() {
   const setRedoStack = useStore(s => s.setRedoStack);
   const canUndo = undoStack.length > 0;
   const canRedo = redoStack.length > 0;
-
-  const { updateAvailable, isUpdating, updateError, checkForUpdate, installUpdate } = useAppUpdater();
-
-  const isResizingLeft = useRef(false);
-  const isResizingRight = useRef(false);
 
   const currentFilePath = useStore(s => s.currentFilePath);
   const setCurrentFilePath = useStore(s => s.setCurrentFilePath);
@@ -239,8 +103,6 @@ export function useCanvasApp() {
   const setCustomBrush = useStore(s => s.setCustomBrush);
   const savedBrushes = useStore(s => s.savedBrushes);
   const setSavedBrushes = useStore(s => s.setSavedBrushes);
-  const selectionDragRef = useRef<{ startGridX: number; startGridY: number; origOffsetX: number; origOffsetY: number } | null>(null);
-  const selectionResizeRef = useRef<{ handle: string; origX: number; origY: number; origW: number; origH: number; origOffX: number; origOffY: number; startGridX: number; startGridY: number; origPixels: (string | null)[][] } | null>(null);
 
   const animState = useStore(s => s.animState);
   const setAnimState = useStore(s => s.setAnimState);
@@ -256,12 +118,6 @@ export function useCanvasApp() {
   const setCutMode = useStore(s => s.setCutMode);
   const transformHud = useStore(s => s.transformHud);
   const setTransformHud = useStore(s => s.setTransformHud);
-  const activeFrame = frames[activeFrameIndex];
-  const layers = activeFrame.layers;
-  const activeLayer = layers.find(layer => layer.id === activeLayerId) ?? layers[0] ?? null;
-  const selectedTransformLayers = layers.filter(layer => selectedLayerIds.includes(layer.id));
-  const frameTransformTool = isFrameTransformTool(currentTool) ? currentTool : null;
-  const transformGuideSize = gridSize * pixelSize;
 
   const canvasRef = useRef<CanvasHandle>(null);
   const previewCanvasRef = useRef<PreviewCanvasHandle>(null);
@@ -289,9 +145,156 @@ export function useCanvasApp() {
   const strokeStart = useRef<{ x: number, y: number } | null>(null);
   const dragCurrent = useRef<{ x: number, y: number } | null>(null);
   const cutPathRef = useRef<{ x: number; y: number }[]>([]);
+  const lassoPanPointRef = useRef<{ x: number; y: number } | null>(null);
   const lastBrushPoint = useRef<{ x: number, y: number } | null>(null);
   const transformSessionRef = useRef<TransformSession | null>(null);
   const ldOriginalGrid = useRef<(string | null)[][] | null>(null);
+  const selectionDragRef = useRef<{ startGridX: number; startGridY: number; origOffsetX: number; origOffsetY: number } | null>(null);
+  const selectionResizeRef = useRef<{ handle: string; origX: number; origY: number; origW: number; origH: number; origOffX: number; origOffY: number; startGridX: number; startGridY: number; origPixels: (string | null)[][] } | null>(null);
+
+  // Tab management
+  const tabs = useStore(s => s.tabs);
+  const setTabs = useStore(s => s.setTabs);
+  const activeTabId = useStore(s => s.activeTabId);
+  const setActiveTabId = useStore(s => s.setActiveTabId);
+  const suppressDirtyForAnimStateRef = useRef<AnimationState | null>(null);
+
+  const snapshotWorkspaceTab = useCallback((tab: TabState): TabState => {
+    return {
+      ...tab,
+      gridSize,
+      gridHeight,
+      animState,
+      currentColor,
+      currentTool,
+      undoStack,
+      redoStack,
+      filePath: currentFilePath,
+      isDirty: isDirty || tab.isDirty || tab.animState !== animState,
+      pan: { ...panRef.current },
+      pixelSize: pixelSizeRef.current,
+    };
+  }, [gridSize, gridHeight, animState, currentColor, currentTool, undoStack, redoStack, currentFilePath, isDirty]);
+
+  const restoreWorkspaceFromTab = useCallback((tab: TabState) => {
+    suppressDirtyForAnimStateRef.current = tab.animState;
+    setGridSize(tab.gridSize);
+    setGridHeight(tab.gridHeight ?? tab.gridSize);
+    setPixelSize(tab.pixelSize);
+    setAnimState(tab.animState);
+    setCurrentColor(tab.currentColor);
+    setCurrentTool(tab.currentTool);
+    setUndoStack(tab.undoStack);
+    setRedoStack(tab.redoStack);
+    setCurrentFilePath(tab.filePath);
+    setIsDirty(tab.isDirty);
+    panRef.current = { ...tab.pan };
+    hasCentered.current = tab.pan.x !== 0 || tab.pan.y !== 0;
+    if (transformContainerRef.current) {
+      transformContainerRef.current.style.transform = `translate(${tab.pan.x}px, ${tab.pan.y}px)`;
+    }
+  }, [setPixelSize, setAnimState, setCurrentColor, setCurrentTool, setUndoStack, setRedoStack, setCurrentFilePath, setIsDirty]);
+
+  const switchToTab = useCallback((tabId: string) => {
+    if (tabId === activeTabId) return;
+    setTabs(prev => prev.map(t => t.id === activeTabId ? snapshotWorkspaceTab(t) : t));
+    setTabs(prev => {
+      const target = prev.find(t => t.id === tabId);
+      if (!target) return prev;
+      restoreWorkspaceFromTab(target);
+      return prev;
+    });
+    setActiveTabId(tabId);
+    setSelection(null);
+  }, [activeTabId, restoreWorkspaceFromTab, setActiveTabId, setSelection, setTabs, snapshotWorkspaceTab]);
+
+  const openFileAsTab = useCallback(async (filePath?: string) => {
+    try {
+      let data: ProjectData;
+      let resolvedPath: string;
+      if (filePath) {
+        const { readTextFile } = await import('@tauri-apps/plugin-fs');
+        const content = await readTextFile(filePath);
+        data = deserializeProject(content);
+        resolvedPath = filePath;
+      } else {
+        const result = await openProjectFile();
+        if (!result) return;
+        data = result.data;
+        resolvedPath = result.filePath;
+      }
+      setTabs(prev => {
+        const existing = prev.find(t => t.filePath === resolvedPath);
+        if (existing) {
+          const next = prev.map(t => t.id === activeTabId ? snapshotWorkspaceTab(t) : t);
+          if (existing.id !== activeTabId) {
+            const target = next.find(t => t.id === existing.id) ?? existing;
+            restoreWorkspaceFromTab(target);
+            setActiveTabId(existing.id);
+            setSelection(null);
+          }
+          return next;
+        }
+        const newTab = tabFromProjectData(data, resolvedPath);
+        addRecentFile(resolvedPath, data.canvas.width, data.canvas.height ?? data.canvas.width);
+        restoreWorkspaceFromTab(newTab);
+        panRef.current = { x: 0, y: 0 };
+        hasCentered.current = false;
+        setActiveTabId(newTab.id);
+        const flushed = prev.map(t => t.id === activeTabId ? snapshotWorkspaceTab(t) : t);
+        return [...flushed, newTab];
+      });
+    } catch (err) {
+      alert(`Open failed: ${(err as Error).message}`);
+    }
+  }, [activeTabId, restoreWorkspaceFromTab, setActiveTabId, setSelection, setTabs, snapshotWorkspaceTab]);
+
+  const addNewTab = useCallback((size: GridSizeType = 32, name = 'Untitled') => {
+    const newTab = createNewTab(size, name);
+    setTabs(prev => {
+      const flushed = prev.map(t => t.id === activeTabId ? snapshotWorkspaceTab(t) : t);
+      return [...flushed, newTab];
+    });
+    restoreWorkspaceFromTab(newTab);
+    panRef.current = { x: 0, y: 0 };
+    hasCentered.current = false;
+    setActiveTabId(newTab.id);
+    setSelection(null);
+  }, [activeTabId, restoreWorkspaceFromTab, setActiveTabId, setSelection, setTabs, snapshotWorkspaceTab]);
+
+  const performCloseTab = useCallback((tabId: string) => {
+    setTabs(prev => {
+      const next = prev.filter(t => t.id !== tabId);
+      if (next.length === 0) { setShowWelcome(true); return next; }
+      if (tabId === activeTabId) {
+        const idx = prev.findIndex(t => t.id === tabId);
+        const target = next[Math.min(idx, next.length - 1)];
+        restoreWorkspaceFromTab(target);
+        setActiveTabId(target.id);
+        setSelection(null);
+      }
+      return next;
+    });
+  }, [activeTabId, restoreWorkspaceFromTab, setActiveTabId, setSelection, setShowWelcome, setTabs]);
+
+  const closeTab = useCallback((tabId: string) => {
+    const tab = tabs.find(t => t.id === tabId);
+    if (tab?.isDirty) { setSaveConfirmTabId(tabId); }
+    else { performCloseTab(tabId); }
+  }, [tabs, performCloseTab, setSaveConfirmTabId]);
+
+  const { updateAvailable, isUpdating, updateError, checkForUpdate, installUpdate } = useAppUpdater();
+
+  const isResizingLeft = useRef(false);
+  const isResizingRight = useRef(false);
+
+  const activeFrame = frames[activeFrameIndex];
+  const layers = activeFrame.layers;
+  const activeLayer = layers.find(layer => layer.id === activeLayerId) ?? layers[0] ?? null;
+  const selectedTransformLayers = layers.filter(layer => selectedLayerIds.includes(layer.id));
+  const frameTransformTool = isFrameTransformTool(currentTool) ? currentTool : null;
+  const transformGuideWidth = gridSize * pixelSize;
+  const transformGuideHeight = gridHeight * pixelSize;
 
   const updatePickerHoverColor = useCallback((nextColor: string | null) => {
     if (pickerHoverColorRef.current === nextColor) return;
@@ -380,7 +383,7 @@ export function useCanvasApp() {
         renderRafRef.current = null;
       }
     };
-  }, [frames, activeFrameIndex, onionSkinEnabled, isPlaying, pixelSize, showGrid, isShowingSuggestions, suggestions]);
+  }, [frames, activeFrameIndex, onionSkinEnabled, isPlaying, pixelSize, gridHeight, showGrid, isShowingSuggestions, suggestions]);
 
   const pushUndoSnapshot = useStore(s => s.pushUndoSnapshot);
 
@@ -391,8 +394,8 @@ export function useCanvasApp() {
 
   const getLayerCenterInContainer = useCallback((transform: LayerTransform) => ({
     x: panRef.current.x + (gridSize * pixelSize) / 2 + transform.x * pixelSize,
-    y: panRef.current.y + (gridSize * pixelSize) / 2 + transform.y * pixelSize,
-  }), [gridSize, pixelSize]);
+    y: panRef.current.y + (gridHeight * pixelSize) / 2 + transform.y * pixelSize,
+  }), [gridSize, gridHeight, pixelSize]);
 
   const getTransformMetrics = useCallback((session: TransformSession, mouseX: number, mouseY: number): TransformMetrics => {
     const deltaGridX = (mouseX - session.startPointer.x) / pixelSize;
@@ -437,6 +440,48 @@ export function useCanvasApp() {
   const handleDuplicateFrame = useStore(s => s.handleDuplicateFrame);
   const handleDeleteFrame = useStore(s => s.handleDeleteFrame);
 
+  const redrawCutPreview = useCallback(() => {
+    if (currentTool !== 'cut') return;
+    if (cutMode === 'lasso') {
+      if (cutPathRef.current.length > 0) previewCanvasRef.current?.drawPath(cutPathRef.current, '#f97316');
+      return;
+    }
+    if (cutMode === 'marquee' && strokeStart.current && dragCurrent.current) {
+      previewCanvasRef.current?.drawPreview(
+        'select',
+        strokeStart.current.x,
+        strokeStart.current.y,
+        dragCurrent.current.x,
+        dragCurrent.current.y,
+        '#f97316',
+      );
+    }
+  }, [currentTool, cutMode]);
+
+  useEffect(() => {
+    if (currentTool !== 'cut') return;
+    if (cutPathRef.current.length === 0 && !strokeStart.current) return;
+
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(redrawCutPreview);
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
+  }, [currentTool, cutMode, gridSize, gridHeight, pixelSize, redrawCutPreview]);
+
+  const applyViewportPanDelta = useCallback((dx: number, dy: number) => {
+    panRef.current = {
+      x: Math.round(panRef.current.x + dx),
+      y: Math.round(panRef.current.y + dy),
+    };
+    if (transformContainerRef.current) {
+      transformContainerRef.current.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px)`;
+    }
+  }, []);
+
   const handleZoom = useCallback((delta: number, mouseX: number, mouseY: number) => {
     const oldPixelSize = pixelSizeRef.current;
     let newPixelSize = oldPixelSize;
@@ -447,7 +492,7 @@ export function useCanvasApp() {
     const panX = panRef.current.x;
     const panY = panRef.current.y;
     const logicalW = gridSize * oldPixelSize;
-    const logicalH = gridSize * oldPixelSize;
+    const logicalH = gridHeight * oldPixelSize;
     const targetX = Math.max(panX, Math.min(mouseX, panX + logicalW));
     const targetY = Math.max(panY, Math.min(mouseY, panY + logicalH));
     panRef.current.x = targetX - (targetX - panX) * scale;
@@ -455,7 +500,7 @@ export function useCanvasApp() {
     pixelSizeRef.current = newPixelSize;
     if (transformContainerRef.current) transformContainerRef.current.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px)`;
     setPixelSize(newPixelSize);
-  }, [gridSize, setPixelSize]);
+  }, [gridSize, gridHeight, setPixelSize]);
 
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
@@ -473,38 +518,38 @@ export function useCanvasApp() {
     if (!showWelcome && !hasCentered.current && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
       const logicalW = gridSize * pixelSize;
-      const logicalH = gridSize * pixelSize;
+      const logicalH = gridHeight * pixelSize;
       panRef.current = { x: Math.round((rect.width - logicalW) / 2), y: Math.round((rect.height - logicalH) / 2) };
       if (transformContainerRef.current) transformContainerRef.current.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px)`;
       hasCentered.current = true;
     }
-  }, [showWelcome, gridSize, pixelSize]);
+  }, [showWelcome, gridSize, gridHeight, pixelSize]);
 
   useSidebarResize(isResizingLeft, isResizingRight);
 
-  const handleSave = useCallback(async () => {
-    if (currentFilePath) {
-      try {
-        await saveProjectToPath(currentFilePath, gridSize, animState, currentColor, currentTool);
-        setIsDirty(false);
-        addRecentFile(currentFilePath, gridSize);
-        setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, isDirty: false } : t));
-      } catch (err) { alert(`Save failed: ${(err as Error).message}`); }
-    } else { handleSaveAs(); }
-  }, [currentFilePath, gridSize, animState, currentColor, currentTool, activeTabId]);
-
   const handleSaveAs = useCallback(async () => {
     try {
-      const path = await saveProjectAs(gridSize, animState, currentColor, currentTool);
+      const path = await saveProjectAs(gridSize, gridHeight, animState, currentColor, currentTool);
       if (path && path !== 'web-download') {
         const name = path.split(/[/\\]/).pop() ?? 'Untitled';
         setCurrentFilePath(path);
         setIsDirty(false);
-        addRecentFile(path, gridSize);
-        setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, filePath: path, name, isDirty: false } : t));
+        addRecentFile(path, gridSize, gridHeight);
+        setTabs(prev => prev.map(t => t.id === activeTabId ? { ...snapshotWorkspaceTab(t), filePath: path, name, isDirty: false } : t));
       }
     } catch (err) { alert(`Save failed: ${(err as Error).message}`); }
-  }, [gridSize, animState, currentColor, currentTool, activeTabId]);
+  }, [gridSize, gridHeight, animState, currentColor, currentTool, activeTabId, setCurrentFilePath, setIsDirty, setTabs, snapshotWorkspaceTab]);
+
+  const handleSave = useCallback(async () => {
+    if (currentFilePath) {
+      try {
+        await saveProjectToPath(currentFilePath, gridSize, gridHeight, animState, currentColor, currentTool);
+        setIsDirty(false);
+        addRecentFile(currentFilePath, gridSize, gridHeight);
+        setTabs(prev => prev.map(t => t.id === activeTabId ? { ...snapshotWorkspaceTab(t), isDirty: false } : t));
+      } catch (err) { alert(`Save failed: ${(err as Error).message}`); }
+    } else { handleSaveAs(); }
+  }, [currentFilePath, gridSize, gridHeight, animState, currentColor, currentTool, activeTabId, handleSaveAs, setIsDirty, setTabs, snapshotWorkspaceTab]);
 
   const handleOpenFile = useCallback(async () => { openFileAsTab(); }, [openFileAsTab]);
 
@@ -513,39 +558,78 @@ export function useCanvasApp() {
     setTabs(prev => {
       const existing = prev.find(t => t.filePath === filePath);
       if (existing) {
-        setActiveTabId(existing.id);
-        setGridSize(existing.gridSize); setPixelSize(existing.pixelSize); setAnimState(existing.animState);
-        setCurrentColor(existing.currentColor); setCurrentTool(existing.currentTool);
-        setUndoStack(existing.undoStack); setRedoStack(existing.redoStack);
-        setCurrentFilePath(existing.filePath); setIsDirty(existing.isDirty);
-        return prev;
+        const next = prev.map(t => t.id === activeTabId ? snapshotWorkspaceTab(t) : t);
+        if (existing.id !== activeTabId) {
+          const target = next.find(t => t.id === existing.id) ?? existing;
+          setActiveTabId(existing.id);
+          restoreWorkspaceFromTab(target);
+          setSelection(null);
+        }
+        return next;
       }
-      const flushed = prev.map(t => t.id !== activeTabId ? t : { ...t, pan: { ...panRef.current }, pixelSize: pixelSizeRef.current });
-      setGridSize(newTab.gridSize); setPixelSize(newTab.pixelSize); setAnimState(newTab.animState);
-      setCurrentColor(newTab.currentColor); setCurrentTool(newTab.currentTool);
-      setUndoStack([]); setRedoStack([]);
-      setCurrentFilePath(newTab.filePath); setIsDirty(false);
+      const flushed = prev.map(t => t.id === activeTabId ? snapshotWorkspaceTab(t) : t);
+      restoreWorkspaceFromTab(newTab);
       panRef.current = { x: 0, y: 0 }; hasCentered.current = false;
       setActiveTabId(newTab.id);
       return [...flushed, newTab];
     });
     setShowWelcome(false);
-    addRecentFile(filePath, data.canvas.width);
+    addRecentFile(filePath, data.canvas.width, data.canvas.height ?? data.canvas.width);
   };
 
   useEffect(() => {
     if (showWelcome) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => { autoSaveProject(gridSize, animState, currentColor, currentTool).catch(console.error); }, 5000);
+    autoSaveTimerRef.current = setTimeout(() => { autoSaveProject(gridSize, gridHeight, animState, currentColor, currentTool).catch(console.error); }, 5000);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
-  }, [animState, gridSize, currentColor, currentTool, showWelcome]);
+  }, [animState, gridSize, gridHeight, currentColor, currentTool, showWelcome]);
+
+  useEffect(() => {
+    if (showWelcome || !activeTabId) return;
+    setTabs(prev => prev.map(tab => {
+      if (tab.id !== activeTabId) return tab;
+      const nextDirty = isDirty || tab.isDirty || tab.animState !== animState;
+      if (
+        tab.gridSize === gridSize &&
+        tab.gridHeight === gridHeight &&
+        tab.animState === animState &&
+        tab.currentColor === currentColor &&
+        tab.currentTool === currentTool &&
+        tab.undoStack === undoStack &&
+        tab.redoStack === redoStack &&
+        tab.filePath === currentFilePath &&
+        tab.isDirty === nextDirty &&
+        tab.pixelSize === pixelSize
+      ) {
+        return tab;
+      }
+      return {
+        ...tab,
+        gridSize,
+        gridHeight,
+        animState,
+        currentColor,
+        currentTool,
+        undoStack,
+        redoStack,
+        filePath: currentFilePath,
+        isDirty: nextDirty,
+        pan: { ...panRef.current },
+        pixelSize,
+      };
+    }));
+  }, [showWelcome, activeTabId, gridSize, gridHeight, animState, currentColor, currentTool, undoStack, redoStack, currentFilePath, isDirty, pixelSize, setTabs]);
 
   useEffect(() => {
     if (!showWelcome) {
+      if (suppressDirtyForAnimStateRef.current === animState) {
+        suppressDirtyForAnimStateRef.current = null;
+        return;
+      }
       setIsDirty(true);
       setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, isDirty: true } : t));
     }
-  }, [animState]);
+  }, [showWelcome, animState, activeTabId, setIsDirty, setTabs]);
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => { if (isDirty) e.preventDefault(); };
@@ -587,7 +671,7 @@ export function useCanvasApp() {
       if (key === '+' || key === '=') { const rect = containerRef.current?.getBoundingClientRect(); if (rect) handleZoom(1, rect.width / 2, rect.height / 2); }
       if (key === '-' || key === '_') { const rect = containerRef.current?.getBoundingClientRect(); if (rect) handleZoom(-1, rect.width / 2, rect.height / 2); }
     };
-    const onKeyUp = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); isSpaceDown.current = false; setIsSpacePressed(false); } };
+    const onKeyUp = (e: KeyboardEvent) => { if (e.code === 'Space') { e.preventDefault(); isSpaceDown.current = false; lassoPanPointRef.current = null; setIsSpacePressed(false); } };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     return () => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); };
@@ -604,7 +688,7 @@ export function useCanvasApp() {
     let cx = mouseX - panRef.current.x;
     let cy = mouseY - panRef.current.y;
     const logicalW = gridSize * pixelSize;
-    const logicalH = gridSize * pixelSize;
+    const logicalH = gridHeight * pixelSize;
     const centerX = logicalW / 2;
     const centerY = logicalH / 2;
     const { x: tx, y: ty, rotation, scale } = layer.transform;
@@ -637,7 +721,7 @@ export function useCanvasApp() {
     return { ...pointer, ...activeCoords };
   };
 
-  const isGridCoordInBounds = (x: number, y: number) => x >= 0 && x < gridSize && y >= 0 && y < gridSize;
+  const isGridCoordInBounds = (x: number, y: number) => x >= 0 && x < gridSize && y >= 0 && y < gridHeight;
 
   const pickTopmostVisibleLayerAt = (mouseX: number, mouseY: number) => {
     const currentLayers = animStateRef.current.frames[animStateRef.current.activeFrameIndex]?.layers ?? layers;
@@ -760,7 +844,7 @@ export function useCanvasApp() {
     const layerIdx = frame?.layers.findIndex(l => l.id === state.activeLayerId) ?? -1;
     if (!frame || layerIdx === -1) return false;
 
-    const result = splitLayerIntoParts(frame.layers[layerIdx], gridSize, action, payload);
+    const result = splitLayerIntoParts(frame.layers[layerIdx], gridSize, gridHeight, action, payload);
     if (!result) {
       return false;
     }
@@ -897,7 +981,7 @@ export function useCanvasApp() {
     const minX = Math.max(0, Math.min(x0, x1));
     const maxX = Math.min(gridSize - 1, Math.max(x0, x1));
     const minY = Math.max(0, Math.min(y0, y1));
-    const maxY = Math.min(gridSize - 1, Math.max(y0, y1));
+    const maxY = Math.min(gridHeight - 1, Math.max(y0, y1));
     const w = maxX - minX + 1, h = maxY - minY + 1;
     if (w <= 0 || h <= 0) return;
     pushUndoSnapshot(animState);
@@ -1003,7 +1087,7 @@ export function useCanvasApp() {
   const resetInteractionState = () => {
     isPanning.current = false; lastPanPoint.current = null;
     isDrawing.current = false; strokeStart.current = null;
-    dragCurrent.current = null; cutPathRef.current = []; lastBrushPoint.current = null;
+    dragCurrent.current = null; cutPathRef.current = []; lassoPanPointRef.current = null; lastBrushPoint.current = null;
     activePointerId.current = null; transformSessionRef.current = null;
     ldOriginalGrid.current = null; setTransformHud(null);
   };
@@ -1040,7 +1124,7 @@ export function useCanvasApp() {
           const newLayers = [...frame.layers];
           let changed = false;
           newLayers.forEach((layer, idx) => {
-            if (layer.transform.x !== 0 || layer.transform.y !== 0 || layer.transform.rotation !== 0 || layer.transform.scale !== 1) { newLayers[idx] = bakeLayerTransform(layer, gridSize); changed = true; }
+            if (layer.transform.x !== 0 || layer.transform.y !== 0 || layer.transform.rotation !== 0 || layer.transform.scale !== 1) { newLayers[idx] = bakeLayerTransform(layer, gridSize, gridHeight); changed = true; }
           });
           if (!changed) return prev;
           frame.layers = newLayers;
@@ -1139,14 +1223,22 @@ export function useCanvasApp() {
     if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
     if (isPanning.current && lastPanPoint.current) {
       const dx = e.clientX - lastPanPoint.current.x, dy = e.clientY - lastPanPoint.current.y;
-      panRef.current.x = Math.round(panRef.current.x + dx); panRef.current.y = Math.round(panRef.current.y + dy);
+      applyViewportPanDelta(dx, dy);
       lastPanPoint.current = { x: e.clientX, y: e.clientY };
-      if (transformContainerRef.current) transformContainerRef.current.style.transform = `translate(${panRef.current.x}px, ${panRef.current.y}px)`;
       return;
+    }
+    const tool = getActiveTool();
+    if (isDrawing.current && tool === 'cut' && cutMode === 'lasso') {
+      if (isSpaceDown.current) {
+        const last = lassoPanPointRef.current;
+        if (last) applyViewportPanDelta(e.clientX - last.x, e.clientY - last.y);
+        lassoPanPointRef.current = { x: e.clientX, y: e.clientY };
+        return;
+      }
+      lassoPanPointRef.current = null;
     }
     const coords = getPointerCoords(e);
     if (!coords) return;
-    const tool = getActiveTool();
     if (tool === 'picker' && isGridCoordInBounds(coords.gridX, coords.gridY)) updatePickerHoverColor(pickTopmostVisibleLayerAt(coords.mouseX, coords.mouseY));
     else updatePickerHoverColor(null);
     updateHover(coords.gridX, coords.gridY, true);
@@ -1241,7 +1333,7 @@ export function useCanvasApp() {
     const result = await openImageFile();
     if (!result) return;
     try {
-      const grid = await imageBlobToGrid(result.blob, gridSize);
+      const grid = await imageBlobToGrid(result.blob, gridSize, gridHeight);
       const layerName = result.name.replace(/\.[^.]+$/, '') || 'Imported';
       pushUndoSnapshot(animState);
       setAnimState(prev => {
@@ -1258,7 +1350,7 @@ export function useCanvasApp() {
     setIsExportingGif(true);
     await new Promise(r => setTimeout(r, 0)); // yield to let loading overlay render
     try {
-      const blob = await exportGif(frames, gridSize, getGifExportScale(gridSize));
+      const blob = await exportGif(frames, gridSize, getGifExportScale(gridSize, gridHeight), gridHeight);
       if ('__TAURI_INTERNALS__' in window) {
         const { save } = await import('@tauri-apps/plugin-dialog');
         const { writeFile } = await import('@tauri-apps/plugin-fs');
@@ -1289,7 +1381,7 @@ export function useCanvasApp() {
       if (frameIndices.length === 1) {
         const frame = frames[frameIndices[0]];
         if (!frame) return;
-        const blob = await exportFrameAsImage(frame, gridSize, 8, format);
+        const blob = await exportFrameAsImage(frame, gridSize, gridHeight, 8, format);
         if (isTauri) {
           const { save } = await import('@tauri-apps/plugin-dialog');
           const { writeFile } = await import('@tauri-apps/plugin-fs');
@@ -1313,14 +1405,14 @@ export function useCanvasApp() {
           const dirPath = await openDir({ directory: true, title: 'Select Folder to Export Frames' });
           if (!dirPath) return;
           for (const i of frameIndices) {
-            const blob = await exportFrameAsImage(frames[i], gridSize, 8, format);
+            const blob = await exportFrameAsImage(frames[i], gridSize, gridHeight, 8, format);
             const bytes = new Uint8Array(await blob.arrayBuffer());
             await writeFile(`${dirPath}/frame-${i + 1}.${fmt.ext}`, bytes);
           }
           window.alert(`Exported ${frameIndices.length} frames successfully.`);
         } else {
           for (const i of frameIndices) {
-            const blob = await exportFrameAsImage(frames[i], gridSize, 8, format);
+            const blob = await exportFrameAsImage(frames[i], gridSize, gridHeight, 8, format);
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a'); a.href = url; a.download = `frame-${i + 1}.${fmt.ext}`; a.click();
             URL.revokeObjectURL(url);
@@ -1405,7 +1497,7 @@ export function useCanvasApp() {
     clearCanvas: () => {
       if (window.confirm('Clear the entire canvas? This cannot be undone.')) {
         pushUndoSnapshot(animState);
-        const defaultFrame = createDefaultFrame(gridSize);
+        const defaultFrame = createDefaultFrame({ width: gridSize, height: gridHeight });
         setAnimState({ frames: [defaultFrame], activeFrameIndex: 0, activeLayerId: defaultFrame.layers[0].id, selectedLayerIds: [defaultFrame.layers[0].id] });
       }
     },
@@ -1419,7 +1511,13 @@ export function useCanvasApp() {
     addFrame: handleAddFrame,
     duplicateFrame: handleDuplicateFrame,
     deleteFrame: handleDeleteFrame,
-    motionAssist: () => setShowMotionAssistDialog(true),
+    motionAssist: () => {
+      if (gridSize !== gridHeight) {
+        window.alert('Motion Assist currently supports square canvases only.');
+        return;
+      }
+      setShowMotionAssistDialog(true);
+    },
     acceptMotionSuggestions: () => acceptSuggestions('Motion', animState.frames[animState.activeFrameIndex]?.duration ?? 100),
     rejectMotionSuggestions: () => rejectSuggestions(),
     checkUpdates: async () => {
@@ -1441,17 +1539,16 @@ export function useCanvasApp() {
   };
 
   const welcomeHandlers = {
-    onNewProject: (size: number) => handleTransition(() => addNewTab(size)),
-    onNewAnimation: (size: number) => handleTransition(() => { addNewTab(size); setAnimationTabPinned(true); setActiveView('animation'); setAnimationMode(true); }),
+    onNewProject: (size: GridSizeType) => handleTransition(() => addNewTab(size)),
+    onNewAnimation: (size: GridSizeType) => handleTransition(() => { addNewTab(size); setAnimationTabPinned(true); setActiveView('animation'); setAnimationMode(true); }),
     onLoadProject: (data: ProjectData, filePath: string) => handleTransition(() => loadProjectData(data, filePath)),
     onContinue: (data: any) => handleTransition(() => {
-      const newTab = createNewTab(data.canvas.width, 'Autosave');
+      const newTab = createNewTab({ width: data.canvas.width, height: data.canvas.height ?? data.canvas.width }, 'Autosave');
       const loaded: TabState = { ...newTab, animState: data.animState, currentColor: data.currentColor, currentTool: data.currentTool };
       setTabs([loaded]); setActiveTabId(loaded.id);
-      setGridSize(loaded.gridSize); setPixelSize(loaded.pixelSize); setAnimState(loaded.animState);
-      setCurrentColor(loaded.currentColor); setCurrentTool(loaded.currentTool);
-      setUndoStack([]); setRedoStack([]);
-      setCurrentFilePath(null); setIsDirty(false); hasCentered.current = false;
+      restoreWorkspaceFromTab(loaded);
+      panRef.current = { x: 0, y: 0 };
+      hasCentered.current = false;
     }),
   };
 
@@ -1466,9 +1563,9 @@ export function useCanvasApp() {
     tabBar: { tabs, activeTabId, onSelectTab: switchToTab, onCloseTab: closeTab, onNewTab: () => setShowNewProjectDialog(true), animationTabPinned, activeView, onSelectView: setActiveView, onUnpinAnimationTab: () => { setAnimationTabPinned(false); setActiveView('canvas'); }, onDropFile: async (file: File) => { try { const text = await file.text(); const data = deserializeProject(text); loadProjectData(data, file.name); } catch { alert(`Could not open: ${file.name}`); } } },
     canvas: {
       containerRef, canvasRef, previewCanvasRef, transformContainerRef, hoverOverlayRef, hoverCanvasRef,
-      gridSize, pixelSize, showGrid, brushSize, canvasCursor,
+      gridSize, gridHeight, pixelSize, showGrid, brushSize, canvasCursor,
       frameTransformTool, visibleTransformHud, selection, currentTool,
-      transformGuideSize, getForwardCssTransform, showTransformGuides, transformGuideLayers, activeLayerId,
+      transformGuideWidth, transformGuideHeight, getForwardCssTransform, showTransformGuides, transformGuideLayers, activeLayerId,
       selectionCopy, selectionPaste: () => selectionPaste(), selectionCut: () => selectionCut(), selectionNewBrush: () => selectionNewBrush(), selectionFlipH, selectionFlipV, selectionDelete,
       onPointerDown: handlePointerDown, onPointerMove: handlePointerMove, onPointerUp: handlePointerUp,
       onPointerCancel: handlePointerCancel, onPointerLeave: handlePointerLeave, onLostPointerCapture: handleLostPointerCapture,
@@ -1480,13 +1577,13 @@ export function useCanvasApp() {
     },
     rightSidebar: {
       width: rightSidebarWidth, layers, activeLayerId, selectedLayerIds,
-      onAddLayer: () => addLayer(layers.length, gridSize), onDeleteLayer: deleteLayer, onRenameLayer: renameLayer,
+      onAddLayer: () => addLayer(layers.length, gridSize, gridHeight), onDeleteLayer: deleteLayer, onRenameLayer: renameLayer,
       onLayerClick: handleLayerClick, onToggleLayerSelection: toggleLayerSelection,
       onReorderLayer: handleReorderLayer,
       onResizerPointerDown: onRightResizerPointerDown,
     },
     bottomBar: {
-      currentColor, gridSize, pixelSize, showGrid, pickerStatusText,
+      currentColor, gridSize, gridHeight, pixelSize, showGrid, pickerStatusText,
       onColorChange: setCurrentColor, onActivateBrush: () => activateTool('brush'),
       onToggleGrid: () => setShowGrid(!showGrid), coordsRef: coordsDisplayRef,
     },
@@ -1514,6 +1611,7 @@ export function useCanvasApp() {
       allFrames: frames,
       activeFrameIndex,
       gridSize,
+      gridHeight,
       onMotionSuggestionsApply: (motionSuggestions: import('../lib/motion/types').SuggestionFrame[], useKeyframeInterpolation: boolean) => {
         showMotionSuggestions(motionSuggestions, animState.activeFrameIndex, useKeyframeInterpolation);
       },
@@ -1526,12 +1624,12 @@ export function useCanvasApp() {
       isExportingGif,
     },
     animation: {
-      animationMode, gridSize, isPlaying, activeFrameIndex,
+      animationMode, gridSize, gridHeight, isPlaying, activeFrameIndex,
       onTogglePlay: () => togglePlay(activeFrameIndex),
       onPinToTab: () => { setAnimationTabPinned(true); setActiveView('animation'); },
     },
     timeline: {
-      gridSize, isPlaying,
+      gridSize, gridHeight, isPlaying,
       onTogglePlay: () => togglePlay(activeFrameIndex),
       onPinToTab: () => { setAnimationTabPinned(true); setActiveView('animation'); },
     },

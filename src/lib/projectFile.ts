@@ -2,7 +2,7 @@
  * Project file I/O for .pixly format.
  * Uses Tauri native APIs when available, falls back to web APIs for dev mode.
  */
-import type { AnimationState, ProjectData, ToolType, GridSizeType } from '../types';
+import type { AnimationState, ProjectData, ToolType } from '../types';
 
 const FILE_VERSION = 1;
 const PIXLY_FILTER = { name: 'Pixly Project', extensions: ['pixly'] };
@@ -14,14 +14,15 @@ const isTauri = (): boolean => typeof window !== 'undefined' && '__TAURI_INTERNA
 // ---------- Serialize / Deserialize ----------
 
 export function serializeProject(
-  gridSize: GridSizeType,
+  gridSize: number,
+  gridHeight: number,
   animState: AnimationState,
   currentColor: string,
   currentTool: ToolType,
 ): string {
   const data: ProjectData = {
     version: FILE_VERSION,
-    canvas: { width: gridSize, height: gridSize },
+    canvas: { width: gridSize, height: gridHeight },
     animState,
     currentColor,
     currentTool,
@@ -45,12 +46,13 @@ export function deserializeProject(json: string): ProjectData {
 // ---------- Save ----------
 
 export async function saveProjectAs(
-  gridSize: GridSizeType,
+  gridSize: number,
+  gridHeight: number,
   animState: AnimationState,
   currentColor: string,
   currentTool: ToolType,
 ): Promise<string | null> {
-  const content = serializeProject(gridSize, animState, currentColor, currentTool);
+  const content = serializeProject(gridSize, gridHeight, animState, currentColor, currentTool);
 
   if (isTauri()) {
     const { save } = await import('@tauri-apps/plugin-dialog');
@@ -79,12 +81,13 @@ export async function saveProjectAs(
 
 export async function saveProjectToPath(
   filePath: string,
-  gridSize: GridSizeType,
+  gridSize: number,
+  gridHeight: number,
   animState: AnimationState,
   currentColor: string,
   currentTool: ToolType,
 ): Promise<void> {
-  const content = serializeProject(gridSize, animState, currentColor, currentTool);
+  const content = serializeProject(gridSize, gridHeight, animState, currentColor, currentTool);
   if (isTauri()) {
     const { writeTextFile } = await import('@tauri-apps/plugin-fs');
     await writeTextFile(filePath, content);

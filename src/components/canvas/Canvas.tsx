@@ -4,6 +4,7 @@ import { renderGridToCanvas, type Rgba } from '../../lib/pixelGridRender';
 
 interface CanvasProps {
   gridSize: number;
+  gridHeight?: number;
   pixelSize: number;
   showGrid: boolean;
 }
@@ -17,15 +18,15 @@ export interface CanvasHandle {
   ) => void;
 }
 
-const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, showGrid }, ref) => {
+const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, gridHeight = gridSize, pixelSize, showGrid }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const colorCacheRef = useRef<Map<string, Rgba>>(new Map());
   const gridCanvasCacheRef = useRef<WeakMap<PixelGrid, Map<string, HTMLCanvasElement>>>(new WeakMap());
 
   // Keep latest props accessible to imperative methods
-  const propsRef = useRef({ gridSize, pixelSize, showGrid });
-  propsRef.current = { gridSize, pixelSize, showGrid };
+  const propsRef = useRef({ gridSize, gridHeight, pixelSize, showGrid });
+  propsRef.current = { gridSize, gridHeight, pixelSize, showGrid };
 
   // ---------- internal helpers ----------
 
@@ -45,9 +46,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     if (!ctx) return;
     ctxRef.current = ctx;
 
-    const { gridSize: gs, pixelSize: ps } = propsRef.current;
-    const logicalW = gs * ps;
-    const logicalH = gs * ps;
+    const { gridSize: gw, gridHeight: gh, pixelSize: ps } = propsRef.current;
+    const logicalW = gw * ps;
+    const logicalH = gh * ps;
     const ratio = getBackingRatio(logicalW, logicalH);
 
     canvas.width = Math.round(logicalW * ratio);
@@ -72,11 +73,11 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
   }, [getBackingRatio]);
 
   const drawGrid = (ctx: CanvasRenderingContext2D) => {
-    const { gridSize: gs, pixelSize: ps } = propsRef.current;
+    const { gridSize: gw, gridHeight: gh, pixelSize: ps } = propsRef.current;
     if (ps < 12) return; // Only show grid when zoomed in enough
 
-    const logicalW = gs * ps;
-    const logicalH = gs * ps;
+    const logicalW = gw * ps;
+    const logicalH = gh * ps;
     const ratio = getBackingRatio(logicalW, logicalH);
 
     // Very subtle solid lines
@@ -85,22 +86,25 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     ctx.setLineDash([]);
 
     ctx.beginPath();
-    for (let i = 0; i <= gs; i++) {
+    for (let i = 0; i <= gw; i++) {
       const pos = i * ps;
       ctx.moveTo(pos, 0);
       ctx.lineTo(pos, logicalH);
+    }
+    for (let i = 0; i <= gh; i++) {
+      const pos = i * ps;
       ctx.moveTo(0, pos);
       ctx.lineTo(logicalW, pos);
     }
     ctx.stroke();
   };
 
-  const applyTransform = (ctx: CanvasRenderingContext2D, transform: LayerTransform, gs: number, ps: number) => {
+  const applyTransform = (ctx: CanvasRenderingContext2D, transform: LayerTransform, gw: number, gh: number, ps: number) => {
     // Translate (in pixel-space)
     ctx.translate(transform.x * ps, transform.y * ps);
 
-    const cx = (gs * ps) / 2;
-    const cy = (gs * ps) / 2;
+    const cx = (gw * ps) / 2;
+    const cy = (gh * ps) / 2;
 
     // Rotate around center
     if (transform.rotation !== 0) {
@@ -117,8 +121,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     }
   };
 
-  const getGridCanvas = (grid: PixelGrid, gs: number, tint?: string) => {
-    const cacheKey = `${gs}:${tint ?? 'color'}`;
+  const getGridCanvas = (grid: PixelGrid, gw: number, gh: number, tint?: string) => {
+    const cacheKey = `${gw}x${gh}:${tint ?? 'color'}`;
     let variants = gridCanvasCacheRef.current.get(grid);
     if (!variants) {
       variants = new Map();
@@ -129,7 +133,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     if (cached) return cached;
 
     const buffer = document.createElement('canvas');
-    renderGridToCanvas(buffer, grid, gs, colorCacheRef.current, tint);
+    renderGridToCanvas(buffer, grid, gw, gh, colorCacheRef.current, tint);
     variants.set(cacheKey, buffer);
     return buffer;
   };
@@ -137,11 +141,13 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
   const renderLayers = (
     ctx: CanvasRenderingContext2D,
     layers: Layer[],
-    gs: number,
+    gw: number,
+    gh: number,
     ps: number,
     tint?: 'prev' | 'next',
   ) => {
-    const logicalSize = gs * ps;
+    const logicalW = gw * ps;
+    const logicalH = gh * ps;
     const tintColor = tint === 'prev' ? '#ff6b35' : tint === 'next' ? '#35a7ff' : undefined;
     for (let i = 0; i < layers.length; i++) {
       const layer = layers[i];
@@ -149,9 +155,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
 
       ctx.save();
       // Apply transform in screen-space
-      applyTransform(ctx, layer.transform, gs, ps);
+      applyTransform(ctx, layer.transform, gw, gh, ps);
       ctx.globalAlpha *= layer.opacity;
-      ctx.drawImage(getGridCanvas(layer.grid, gs, tintColor), 0, 0, gs, gs, 0, 0, logicalSize, logicalSize);
+      ctx.drawImage(getGridCanvas(layer.grid, gw, gh, tintColor), 0, 0, gw, gh, 0, 0, logicalW, logicalH);
       
       ctx.restore();
     }
@@ -160,14 +166,15 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
   const renderSuggestionGrid = (
     ctx: CanvasRenderingContext2D,
     grid: PixelGrid,
-    gs: number,
+    gw: number,
+    gh: number,
     ps: number,
     tint: string,
     opacity: number,
   ) => {
     ctx.save();
     ctx.globalAlpha *= opacity;
-    ctx.drawImage(getGridCanvas(grid, gs, tint), 0, 0, gs, gs, 0, 0, gs * ps, gs * ps);
+    ctx.drawImage(getGridCanvas(grid, gw, gh, tint), 0, 0, gw, gh, 0, 0, gw * ps, gh * ps);
     ctx.restore();
   };
 
@@ -179,9 +186,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
     const ctx = ctxRef.current;
     if (!ctx) return;
 
-    const { gridSize: gs, pixelSize: ps, showGrid: sg } = propsRef.current;
-    const logicalW = gs * ps;
-    const logicalH = gs * ps;
+    const { gridSize: gw, gridHeight: gh, pixelSize: ps, showGrid: sg } = propsRef.current;
+    const logicalW = gw * ps;
+    const logicalH = gh * ps;
 
     // 1. Clear (checkerboard is now handled by CSS background)
     ctx.clearRect(0, 0, logicalW, logicalH);
@@ -191,18 +198,18 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
       for (const { frame: oFrame, tint, opacity } of onionFrames) {
         ctx.save();
         ctx.globalAlpha = opacity;
-        renderLayers(ctx, oFrame.layers, gs, ps, tint);
+        renderLayers(ctx, oFrame.layers, gw, gh, ps, tint);
         ctx.restore();
       }
     }
 
     // 3. Current frame
-    renderLayers(ctx, frame.layers, gs, ps);
+    renderLayers(ctx, frame.layers, gw, gh, ps);
 
     // 4. Suggestion overlay
     if (suggestionFrames) {
       for (const { grid, tint, opacity } of suggestionFrames) {
-        renderSuggestionGrid(ctx, grid, gs, ps, tint, opacity);
+        renderSuggestionGrid(ctx, grid, gw, gh, ps, tint, opacity);
       }
     }
 
@@ -216,7 +223,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ gridSize, pixelSize, sho
 
   useEffect(() => {
     setupCanvas();
-  }, [gridSize, pixelSize, showGrid, setupCanvas]);
+  }, [gridSize, gridHeight, pixelSize, showGrid, setupCanvas]);
 
   // ---------- imperative API ----------
 

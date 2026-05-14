@@ -57,25 +57,26 @@ export function parseCssColor(color: string, cache: Map<string, Rgba>): Rgba {
 export function renderGridToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   grid: PixelGrid,
-  gridSize: number,
+  gridWidth: number,
+  gridHeight: number,
   colorCache: Map<string, Rgba>,
   tint?: string,
 ): void {
-  if (canvas.width !== gridSize) canvas.width = gridSize;
-  if (canvas.height !== gridSize) canvas.height = gridSize;
+  if (canvas.width !== gridWidth) canvas.width = gridWidth;
+  if (canvas.height !== gridHeight) canvas.height = gridHeight;
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  const imageData = ctx.createImageData(gridSize, gridSize);
+  const imageData = ctx.createImageData(gridWidth, gridHeight);
   const data = imageData.data;
   const tintRgba = tint ? parseCssColor(tint, colorCache) : null;
 
-  for (let y = 0; y < gridSize; y++) {
+  for (let y = 0; y < gridHeight; y++) {
     const row = grid[y];
     if (!row) continue;
-    let offset = y * gridSize * 4;
-    for (let x = 0; x < gridSize; x++) {
+    let offset = y * gridWidth * 4;
+    for (let x = 0; x < gridWidth; x++) {
       const color = row[x];
       if (!color) {
         offset += 4;
@@ -93,4 +94,3 @@ export function renderGridToCanvas(
 
   ctx.putImageData(imageData, 0, 0);
 }
-

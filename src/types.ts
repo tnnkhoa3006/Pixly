@@ -54,7 +54,7 @@ export type SelectionState = {
   offsetY: number;
 };
 
-export type GridSizeType = number;
+export type GridSizeType = number | { width: number; height: number };
 
 /** Serialized project file (.pixly) */
 export type ProjectData = {
@@ -73,7 +73,10 @@ export type TabState = {
   name: string;
   filePath: string | null;
   isDirty: boolean;
-  gridSize: GridSizeType;
+  /** Canvas width in grid cells */
+  gridSize: number;
+  /** Canvas height in grid cells. Older square tabs may omit this and fall back to gridSize. */
+  gridHeight: number;
   animState: AnimationState;
   currentColor: string;
   currentTool: ToolType;

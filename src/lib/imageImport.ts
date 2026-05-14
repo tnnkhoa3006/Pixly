@@ -43,38 +43,38 @@ export async function openImageFile(): Promise<{ name: string; blob: Blob } | nu
 }
 
 /**
- * Converts an image Blob into a PixelGrid sized to fit the given gridSize.
+ * Converts an image Blob into a PixelGrid sized to fit the given canvas dimensions.
  * Preserves aspect ratio — non-square images are centered with transparent padding.
  * Uses nearest-neighbor (imageSmoothingEnabled = false) for crisp pixel art.
  * Pixels with alpha < 128 are treated as transparent (null).
  */
-export async function imageBlobToGrid(blob: Blob, gridSize: number): Promise<PixelGrid> {
+export async function imageBlobToGrid(blob: Blob, gridSize: number, gridHeight: number = gridSize): Promise<PixelGrid> {
   const bitmap = await createImageBitmap(blob);
 
   // Calculate aspect-ratio-preserving dimensions
   const { width: srcW, height: srcH } = bitmap;
-  const scale = Math.min(gridSize / srcW, gridSize / srcH);
+  const scale = Math.min(gridSize / srcW, gridHeight / srcH);
   const drawW = Math.round(srcW * scale);
   const drawH = Math.round(srcH * scale);
   const offsetX = Math.floor((gridSize - drawW) / 2);
-  const offsetY = Math.floor((gridSize - drawH) / 2);
+  const offsetY = Math.floor((gridHeight - drawH) / 2);
 
   // Draw to offscreen canvas at 1:1 grid resolution
   const canvas = document.createElement('canvas');
   canvas.width = gridSize;
-  canvas.height = gridSize;
+  canvas.height = gridHeight;
   const ctx = canvas.getContext('2d')!;
   ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, gridSize, gridSize);
+  ctx.clearRect(0, 0, gridSize, gridHeight);
   ctx.drawImage(bitmap, 0, 0, srcW, srcH, offsetX, offsetY, drawW, drawH);
   bitmap.close();
 
   // Read pixel data and convert to PixelGrid
-  const imageData = ctx.getImageData(0, 0, gridSize, gridSize);
+  const imageData = ctx.getImageData(0, 0, gridSize, gridHeight);
   const { data } = imageData;
   const grid: PixelGrid = [];
 
-  for (let y = 0; y < gridSize; y++) {
+  for (let y = 0; y < gridHeight; y++) {
     const row: (string | null)[] = [];
     for (let x = 0; x < gridSize; x++) {
       const idx = (y * gridSize + x) * 4;

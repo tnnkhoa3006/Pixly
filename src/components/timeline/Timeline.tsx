@@ -9,6 +9,7 @@ import { useStore } from '../../store';
 
 interface TimelineProps {
   gridSize: number;
+  gridHeight?: number;
   isPlaying: boolean;
   onTogglePlay: () => void;
   /** Called when user drops the floating panel onto the tab bar */
@@ -19,7 +20,7 @@ interface TimelineProps {
 
 const THUMB_SIZE = 40;
 
-function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, gridSize: number) {
+function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, gridSize: number, gridHeight: number = gridSize) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
@@ -33,7 +34,12 @@ function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, gridSize: numb
   ctx.imageSmoothingEnabled = false;
 
   // Dark checkerboard bg
-  const sq = Math.max(2, Math.round(THUMB_SIZE / gridSize / 2));
+  const maxSide = Math.max(gridSize, gridHeight);
+  const drawW = (gridSize / maxSide) * THUMB_SIZE;
+  const drawH = (gridHeight / maxSide) * THUMB_SIZE;
+  const offsetX = (THUMB_SIZE - drawW) / 2;
+  const offsetY = (THUMB_SIZE - drawH) / 2;
+  const sq = Math.max(2, Math.round(THUMB_SIZE / maxSide / 2));
   for (let row = 0; row < Math.ceil(THUMB_SIZE / sq); row++) {
     for (let col = 0; col < Math.ceil(THUMB_SIZE / sq); col++) {
       ctx.fillStyle = (row + col) % 2 === 0 ? '#2a2a3e' : '#22223a';
@@ -41,26 +47,29 @@ function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, gridSize: numb
     }
   }
 
-  const ps = THUMB_SIZE / gridSize;
+  const ps = THUMB_SIZE / maxSide;
 
   for (const layer of frame.layers) {
     if (!layer.visible) continue;
     ctx.save();
+    ctx.translate(offsetX, offsetY);
     ctx.translate(layer.transform.x * ps, layer.transform.y * ps);
     if (layer.transform.rotation !== 0) {
-      const c = THUMB_SIZE / 2;
-      ctx.translate(c, c);
+      const cx = drawW / 2;
+      const cy = drawH / 2;
+      ctx.translate(cx, cy);
       ctx.rotate((layer.transform.rotation * Math.PI) / 180);
-      ctx.translate(-c, -c);
+      ctx.translate(-cx, -cy);
     }
     if (layer.transform.scale !== 1) {
-      const c = THUMB_SIZE / 2;
-      ctx.translate(c, c);
+      const cx = drawW / 2;
+      const cy = drawH / 2;
+      ctx.translate(cx, cy);
       ctx.scale(layer.transform.scale, layer.transform.scale);
-      ctx.translate(-c, -c);
+      ctx.translate(-cx, -cy);
     }
     ctx.globalAlpha = layer.opacity;
-    for (let y = 0; y < gridSize; y++) {
+    for (let y = 0; y < gridHeight; y++) {
       for (let x = 0; x < gridSize; x++) {
         const color = layer.grid[y]?.[x];
         if (color) {
@@ -76,13 +85,14 @@ function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, gridSize: numb
 // ---------- Keyframe marker ----------
 
 const KeyframeMarker = memo(({
-  frame, index, isActive, gridSize, isDragging, dropTarget, draggable, compact,
+  frame, index, isActive, gridSize, gridHeight = gridSize, isDragging, dropTarget, draggable, compact,
   onClick, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd
 }: {
   frame: Frame;
   index: number;
   isActive: boolean;
   gridSize: number;
+  gridHeight?: number;
   isDragging: boolean;
   dropTarget: 'left' | 'right' | null;
   draggable: boolean;
@@ -97,8 +107,8 @@ const KeyframeMarker = memo(({
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    if (!compact && canvasRef.current) renderThumbnail(canvasRef.current, frame, gridSize);
-  }, [frame, gridSize, compact]);
+    if (!compact && canvasRef.current) renderThumbnail(canvasRef.current, frame, gridSize, gridHeight);
+  }, [frame, gridSize, gridHeight, compact]);
 
   return (
     <div
@@ -121,6 +131,7 @@ const KeyframeMarker = memo(({
 
 export default function Timeline({
   gridSize,
+  gridHeight = gridSize,
   isPlaying,
   onTogglePlay,
   onPinToTab,
@@ -463,6 +474,7 @@ export default function Timeline({
             index={i}
             isActive={i === activeFrameIndex}
             gridSize={gridSize}
+            gridHeight={gridHeight}
             isDragging={draggedIndex === i}
             dropTarget={dropTargetIndex === i ? dropPosition : null}
             draggable={!isPlaying && frames.length > 1}

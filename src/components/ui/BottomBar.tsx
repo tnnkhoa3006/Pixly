@@ -6,6 +6,7 @@ const DEFAULT_PALETTE = ['#000000', '#ffffff', '#ef4444', '#f97316', '#eab308', 
 interface BottomBarProps {
   currentColor: string;
   gridSize: number;
+  gridHeight: number;
   pixelSize: number;
   showGrid: boolean;
   pickerStatusText: string | null;
@@ -16,7 +17,7 @@ interface BottomBarProps {
 }
 
 export default memo(function BottomBar({
-  currentColor, gridSize, pixelSize, showGrid, pickerStatusText,
+  currentColor, gridSize, gridHeight, pixelSize, showGrid, pickerStatusText,
   onColorChange, onActivateBrush, onToggleGrid, coordsRef,
 }: BottomBarProps) {
   return (
@@ -43,7 +44,7 @@ export default memo(function BottomBar({
         <button onClick={onToggleGrid} className={`grid-toggle-btn${showGrid ? ' active' : ''}`} title="Toggle Grid (G)">
           <Grid3X3 size={16} />
         </button>
-        <span className="grid-size-label" title="Canvas size">{gridSize}x{gridSize}</span>
+        <span className="grid-size-label" title="Canvas size">{gridSize}x{gridHeight}</span>
       </div>
       <div className="bottom-bar-divider" />
       <div className="bottom-bar-section">

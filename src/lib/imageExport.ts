@@ -26,15 +26,21 @@ export function getFormatOption(value: string): FormatOption {
 function renderFrameToCanvas(
   frame: Frame,
   gridSize: number,
+  gridHeight: number,
   scale: number,
+  backgroundColor: string | null = null,
 ): OffscreenCanvas {
-  const size = gridSize * scale;
-  const canvas = new OffscreenCanvas(size, size);
+  const width = gridSize * scale;
+  const height = gridHeight * scale;
+  const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d')!;
   ctx.imageSmoothingEnabled = false;
 
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, size, size);
+  ctx.clearRect(0, 0, width, height);
+  if (backgroundColor) {
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, width, height);
+  }
 
   for (const layer of frame.layers) {
     if (!layer.visible) continue;
@@ -44,20 +50,22 @@ function renderFrameToCanvas(
     ctx.translate(layer.transform.x * ps, layer.transform.y * ps);
 
     if (layer.transform.rotation !== 0) {
-      const c = size / 2;
-      ctx.translate(c, c);
+      const cx = width / 2;
+      const cy = height / 2;
+      ctx.translate(cx, cy);
       ctx.rotate((layer.transform.rotation * Math.PI) / 180);
-      ctx.translate(-c, -c);
+      ctx.translate(-cx, -cy);
     }
     if (layer.transform.scale !== 1) {
-      const c = size / 2;
-      ctx.translate(c, c);
+      const cx = width / 2;
+      const cy = height / 2;
+      ctx.translate(cx, cy);
       ctx.scale(layer.transform.scale, layer.transform.scale);
-      ctx.translate(-c, -c);
+      ctx.translate(-cx, -cy);
     }
 
     ctx.globalAlpha = layer.opacity;
-    for (let y = 0; y < gridSize; y++) {
+    for (let y = 0; y < gridHeight; y++) {
       for (let x = 0; x < gridSize; x++) {
         const color = layer.grid[y]?.[x];
         if (color) {
@@ -75,10 +83,12 @@ function renderFrameToCanvas(
 export async function exportFrameAsImage(
   frame: Frame,
   gridSize: number,
+  gridHeight: number,
   scale: number,
   format: string,
 ): Promise<Blob> {
   const fmt = getFormatOption(format);
-  const canvas = renderFrameToCanvas(frame, gridSize, scale);
+  const backgroundColor = fmt.value === 'jpg' ? '#ffffff' : null;
+  const canvas = renderFrameToCanvas(frame, gridSize, gridHeight, scale, backgroundColor);
   return canvas.convertToBlob({ type: fmt.mime, quality: 0.92 });
 }

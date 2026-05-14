@@ -115,14 +115,15 @@ function createCanvas(width: number, height: number): RenderCanvas {
 function getGridCanvas(
   grid: PixelGrid,
   gridSize: number,
+  gridHeight: number,
   cache: WeakMap<PixelGrid, RenderCanvas>,
   colorCache: Map<string, Rgba>,
 ): RenderCanvas {
   const cached = cache.get(grid);
   if (cached) return cached;
 
-  const canvas = createCanvas(gridSize, gridSize);
-  renderGridToCanvas(canvas, grid, gridSize, colorCache);
+  const canvas = createCanvas(gridSize, gridHeight);
+  renderGridToCanvas(canvas, grid, gridSize, gridHeight, colorCache);
   cache.set(grid, canvas);
   return canvas;
 }
@@ -130,18 +131,20 @@ function getGridCanvas(
 function renderFrameToRgbStream(
   frame: Frame,
   gridSize: number,
+  gridHeight: number,
   scale: number,
   gridCanvasCache: WeakMap<PixelGrid, RenderCanvas>,
   colorCache: Map<string, Rgba>,
 ): Uint32Array {
-  const size = gridSize * scale;
-  const canvas = createCanvas(size, size);
+  const width = gridSize * scale;
+  const height = gridHeight * scale;
+  const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Could not render GIF frame.');
 
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, size, size);
+  ctx.fillRect(0, 0, width, height);
 
   for (const layer of frame.layers) {
     if (!layer.visible) continue;
@@ -150,27 +153,29 @@ function renderFrameToRgbStream(
     ctx.translate(layer.transform.x * scale, layer.transform.y * scale);
 
     if (layer.transform.rotation !== 0) {
-      const c = size / 2;
-      ctx.translate(c, c);
+      const cx = width / 2;
+      const cy = height / 2;
+      ctx.translate(cx, cy);
       ctx.rotate((layer.transform.rotation * Math.PI) / 180);
-      ctx.translate(-c, -c);
+      ctx.translate(-cx, -cy);
     }
 
     if (layer.transform.scale !== 1) {
-      const c = size / 2;
-      ctx.translate(c, c);
+      const cx = width / 2;
+      const cy = height / 2;
+      ctx.translate(cx, cy);
       ctx.scale(layer.transform.scale, layer.transform.scale);
-      ctx.translate(-c, -c);
+      ctx.translate(-cx, -cy);
     }
 
     ctx.globalAlpha = layer.opacity;
-    const layerCanvas = getGridCanvas(layer.grid, gridSize, gridCanvasCache, colorCache);
-    ctx.drawImage(layerCanvas, 0, 0, gridSize, gridSize, 0, 0, size, size);
+    const layerCanvas = getGridCanvas(layer.grid, gridSize, gridHeight, gridCanvasCache, colorCache);
+    ctx.drawImage(layerCanvas, 0, 0, gridSize, gridHeight, 0, 0, width, height);
     ctx.restore();
   }
 
-  const { data } = ctx.getImageData(0, 0, size, size);
-  const stream = new Uint32Array(size * size);
+  const { data } = ctx.getImageData(0, 0, width, height);
+  const stream = new Uint32Array(width * height);
   for (let i = 0; i < stream.length; i++) {
     const offset = i * 4;
     stream[i] = (data[offset] << 16) | (data[offset + 1] << 8) | data[offset + 2];
@@ -281,18 +286,20 @@ export async function exportGif(
   frames: Frame[],
   gridSize: number,
   scale: number = 4,
+  gridHeight: number = gridSize,
 ): Promise<Blob> {
   if (frames.length === 0) {
     throw new Error('No frames to export.');
   }
 
-  const size = gridSize * scale;
+  const width = gridSize * scale;
+  const height = gridHeight * scale;
   const histogram = new Map<number, number>();
   const gridCanvasCache = new WeakMap<PixelGrid, RenderCanvas>();
   const colorCache = new Map<string, Rgba>();
 
   for (const frame of frames) {
-    collectHistogram(renderFrameToRgbStream(frame, gridSize, scale, gridCanvasCache, colorCache), histogram);
+    collectHistogram(renderFrameToRgbStream(frame, gridSize, gridHeight, scale, gridCanvasCache, colorCache), histogram);
     await yieldToBrowser();
   }
 
@@ -307,8 +314,8 @@ export async function exportGif(
   const w16 = (v: number) => { bytes.push(v & 0xff); bytes.push((v >> 8) & 0xff); };
 
   w('GIF89a');
-  w16(size);
-  w16(size);
+  w16(width);
+  w16(height);
 
   const gctFlag = 0x80 | ((table.palBits - 1) & 7) | (((table.palBits - 1) & 7) << 4);
   bytes.push(gctFlag);
@@ -339,13 +346,13 @@ export async function exportGif(
     bytes.push(0x2c);
     w16(0);
     w16(0);
-    w16(size);
-    w16(size);
+    w16(width);
+    w16(height);
     bytes.push(0x00);
 
     bytes.push(minCodeSize);
 
-    const stream = renderFrameToRgbStream(frame, gridSize, scale, gridCanvasCache, colorCache);
+    const stream = renderFrameToRgbStream(frame, gridSize, gridHeight, scale, gridCanvasCache, colorCache);
     const indices = rgbStreamToIndices(stream, paletteInfo);
     const compressed = lzwEncode(indices, minCodeSize);
     const blocks = subBlocks(compressed);

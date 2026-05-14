@@ -17,14 +17,15 @@ export interface LayerSplitResult {
 export function splitLayer(
   layer: Layer,
   gridSize: number,
+  gridHeight: number,
   action: CutMode,
   payload: LayerSplitPayload = {},
 ): LayerSplitResult | null {
-  if (action === 'marquee') return splitRect(layer, gridSize, payload);
-  return splitLasso(layer, gridSize, payload.points);
+  if (action === 'marquee') return splitRect(layer, gridSize, gridHeight, payload);
+  return splitLasso(layer, gridSize, gridHeight, payload.points);
 }
 
-function splitRect(layer: Layer, gridSize: number, payload: LayerSplitPayload): LayerSplitResult | null {
+function splitRect(layer: Layer, gridSize: number, gridHeight: number, payload: LayerSplitPayload): LayerSplitResult | null {
   if (
     payload.x0 === undefined ||
     payload.y0 === undefined ||
@@ -36,9 +37,9 @@ function splitRect(layer: Layer, gridSize: number, payload: LayerSplitPayload): 
 
   const minX = clamp(Math.min(payload.x0, payload.x1), 0, gridSize - 1);
   const maxX = clamp(Math.max(payload.x0, payload.x1), 0, gridSize - 1);
-  const minY = clamp(Math.min(payload.y0, payload.y1), 0, gridSize - 1);
-  const maxY = clamp(Math.max(payload.y0, payload.y1), 0, gridSize - 1);
-  const mask = new Uint8Array(gridSize * gridSize);
+  const minY = clamp(Math.min(payload.y0, payload.y1), 0, gridHeight - 1);
+  const maxY = clamp(Math.max(payload.y0, payload.y1), 0, gridHeight - 1);
+  const mask = new Uint8Array(gridSize * gridHeight);
 
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
@@ -46,20 +47,21 @@ function splitRect(layer: Layer, gridSize: number, payload: LayerSplitPayload): 
     }
   }
 
-  return splitByMask(layer, gridSize, mask, `${layer.name} Selection`);
+  return splitByMask(layer, gridSize, gridHeight, mask, `${layer.name} Selection`);
 }
 
 function splitLasso(
   layer: Layer,
   gridSize: number,
+  gridHeight: number,
   points?: { x: number; y: number }[],
 ): LayerSplitResult | null {
   if (!points || points.length < 3) return null;
   const compact = compactPath(points);
   if (compact.length < 3) return null;
 
-  const mask = new Uint8Array(gridSize * gridSize);
-  const bounds = getPathBounds(compact, gridSize);
+  const mask = new Uint8Array(gridSize * gridHeight);
+  const bounds = getPathBounds(compact, gridSize, gridHeight);
 
   for (let y = bounds.minY; y <= bounds.maxY; y++) {
     for (let x = bounds.minX; x <= bounds.maxX; x++) {
@@ -70,16 +72,16 @@ function splitLasso(
     }
   }
 
-  return splitByMask(layer, gridSize, mask, `${layer.name} Lasso`);
+  return splitByMask(layer, gridSize, gridHeight, mask, `${layer.name} Lasso`);
 }
 
-function splitByMask(layer: Layer, gridSize: number, mask: Uint8Array, name: string): LayerSplitResult | null {
-  const remaining = createEmptyGrid(gridSize);
-  const extracted = createEmptyGrid(gridSize);
+function splitByMask(layer: Layer, gridSize: number, gridHeight: number, mask: Uint8Array, name: string): LayerSplitResult | null {
+  const remaining = createEmptyGrid(gridSize, gridHeight);
+  const extracted = createEmptyGrid(gridSize, gridHeight);
   let extractedCount = 0;
   let remainingCount = 0;
 
-  for (let y = 0; y < gridSize; y++) {
+  for (let y = 0; y < gridHeight; y++) {
     for (let x = 0; x < gridSize; x++) {
       const color = layer.grid[y]?.[x];
       if (!color) continue;
@@ -129,17 +131,17 @@ function compactPath(points: { x: number; y: number }[]): { x: number; y: number
   return compact;
 }
 
-function getPathBounds(points: { x: number; y: number }[], gridSize: number) {
+function getPathBounds(points: { x: number; y: number }[], gridSize: number, gridHeight: number) {
   let minX = gridSize - 1;
-  let minY = gridSize - 1;
+  let minY = gridHeight - 1;
   let maxX = 0;
   let maxY = 0;
 
   for (const point of points) {
     minX = Math.min(minX, clamp(point.x, 0, gridSize - 1));
-    minY = Math.min(minY, clamp(point.y, 0, gridSize - 1));
+    minY = Math.min(minY, clamp(point.y, 0, gridHeight - 1));
     maxX = Math.max(maxX, clamp(point.x, 0, gridSize - 1));
-    maxY = Math.max(maxY, clamp(point.y, 0, gridSize - 1));
+    maxY = Math.max(maxY, clamp(point.y, 0, gridHeight - 1));
   }
 
   return { minX, minY, maxX, maxY };

@@ -3,7 +3,7 @@
  * Uses double-file strategy to prevent corruption.
  * Falls back to localStorage when running in browser dev mode.
  */
-import type { AnimationState, ProjectData, ToolType, GridSizeType } from '../types';
+import type { AnimationState, ProjectData, ToolType } from '../types';
 import { serializeProject, deserializeProject } from './projectFile';
 
 const AUTOSAVE_KEY = 'pixly_autosave';
@@ -31,12 +31,13 @@ async function ensureDir(dir: string) {
 // ---------- Auto-save (Tauri: double-file, Web: localStorage) ----------
 
 export async function autoSaveProject(
-  gridSize: GridSizeType,
+  gridSize: number,
+  gridHeight: number,
   animState: AnimationState,
   currentColor: string,
   currentTool: ToolType,
 ): Promise<void> {
-  const content = serializeProject(gridSize, animState, currentColor, currentTool);
+  const content = serializeProject(gridSize, gridHeight, animState, currentColor, currentTool);
 
   if (isTauri()) {
     try {
@@ -44,7 +45,6 @@ export async function autoSaveProject(
       const dir = await getAutoSaveDir();
       await ensureDir(dir);
 
-      // Read meta to know which slot was last written
       let lastSlot: 'a' | 'b' = 'a';
       const metaPath = dir + AUTOSAVE_META;
       try {
@@ -54,18 +54,15 @@ export async function autoSaveProject(
         }
       } catch { /* ignore corrupt meta */ }
 
-      // Write to the OTHER slot (so if crash mid-write, the good one survives)
       const writeSlot = lastSlot === 'a' ? 'b' : 'a';
       const writeFile = writeSlot === 'a' ? AUTOSAVE_A : AUTOSAVE_B;
       await writeTextFile(dir + writeFile, content);
 
-      // Update meta to point to the newly written slot
       await writeTextFile(metaPath, JSON.stringify({ lastSlot: writeSlot, timestamp: Date.now() }));
     } catch (err) {
       console.error('Tauri auto-save failed:', err);
     }
   } else {
-    // Web fallback
     try {
       localStorage.setItem(AUTOSAVE_KEY, content);
     } catch (err) {
@@ -87,7 +84,6 @@ export async function loadAutoSave(): Promise<ProjectData | null> {
       const primarySlot = meta.lastSlot === 'a' ? AUTOSAVE_A : AUTOSAVE_B;
       const fallbackSlot = meta.lastSlot === 'a' ? AUTOSAVE_B : AUTOSAVE_A;
 
-      // Try primary slot first
       for (const file of [primarySlot, fallbackSlot]) {
         try {
           const path = dir + file;
@@ -101,7 +97,6 @@ export async function loadAutoSave(): Promise<ProjectData | null> {
       console.error('Tauri auto-save load failed:', err);
     }
   } else {
-    // Web fallback
     try {
       const content = localStorage.getItem(AUTOSAVE_KEY);
       if (content) return deserializeProject(content);
@@ -154,16 +149,15 @@ export function getRecentFiles(): RecentFile[] {
   } catch { return []; }
 }
 
-export function addRecentFile(filePath: string, gridSize: number): void {
+export function addRecentFile(filePath: string, gridSize: number, gridHeight: number = gridSize): void {
   const recent = getRecentFiles().filter(r => r.filePath !== filePath);
   const name = filePath.split(/[/\\]/).pop() || filePath;
   recent.unshift({
     filePath,
     name,
     timestamp: new Date().toISOString(),
-    canvasSize: `${gridSize}×${gridSize}`,
+    canvasSize: `${gridSize}x${gridHeight}`,
   });
-  // Keep max 10
   if (recent.length > 10) recent.length = 10;
   localStorage.setItem(RECENT_FILES_KEY, JSON.stringify(recent));
 }

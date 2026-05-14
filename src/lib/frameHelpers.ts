@@ -1,10 +1,15 @@
-import type { Layer, PixelGrid, Frame, LayerTransform } from '../types';
+import type { Layer, PixelGrid, Frame, LayerTransform, GridSizeType } from '../types';
 
 export const generateId = (): string =>
   Math.random().toString(36).substring(2, 9);
 
-export const createEmptyGrid = (size: number): PixelGrid =>
-  Array(size).fill(null).map(() => Array(size).fill(null));
+export function resolveGridSize(size: GridSizeType): { width: number; height: number } {
+  if (typeof size === 'number') return { width: size, height: size };
+  return { width: size.width, height: size.height };
+}
+
+export const createEmptyGrid = (width: number, height: number = width): PixelGrid =>
+  Array(height).fill(null).map(() => Array(width).fill(null));
 
 export const createDefaultTransform = (): LayerTransform => ({
   x: 0,
@@ -45,7 +50,8 @@ export const shallowCloneFrame = (frame: Frame): Frame => ({
 });
 
 /** Create a blank frame with one empty layer */
-export const createDefaultFrame = (gridSize: number): Frame => {
+export const createDefaultFrame = (size: GridSizeType): Frame => {
+  const { width, height } = resolveGridSize(size);
   const layerId = generateId();
   return {
     id: generateId(),
@@ -54,7 +60,7 @@ export const createDefaultFrame = (gridSize: number): Frame => {
       name: 'Layer 1',
       visible: true,
       opacity: 1,
-      grid: createEmptyGrid(gridSize),
+      grid: createEmptyGrid(width, height),
       transform: createDefaultTransform(),
     }],
     duration: 100,
@@ -85,7 +91,7 @@ export const resizePixels = (
  * Bakes the layer's transform (translate, rotate, scale) into its pixel grid.
  * Returns a new layer object with the updated grid and a reset transform.
  */
-export const bakeLayerTransform = (layer: Layer, gridSize: number): Layer => {
+export const bakeLayerTransform = (layer: Layer, gridSize: number, gridHeight: number = gridSize): Layer => {
   if (
     layer.transform.x === 0 &&
     layer.transform.y === 0 &&
@@ -95,13 +101,13 @@ export const bakeLayerTransform = (layer: Layer, gridSize: number): Layer => {
     return layer;
   }
 
-  const newGrid = createEmptyGrid(gridSize);
+  const newGrid = createEmptyGrid(gridSize, gridHeight);
   const cx = gridSize / 2;
-  const cy = gridSize / 2;
+  const cy = gridHeight / 2;
   const cos = Math.cos((-layer.transform.rotation * Math.PI) / 180);
   const sin = Math.sin((-layer.transform.rotation * Math.PI) / 180);
 
-  for (let ny = 0; ny < gridSize; ny++) {
+  for (let ny = 0; ny < gridHeight; ny++) {
     for (let nx = 0; nx < gridSize; nx++) {
       // 1. Inverse translate
       let ox = nx - layer.transform.x;
@@ -127,7 +133,7 @@ export const bakeLayerTransform = (layer: Layer, gridSize: number): Layer => {
       const srcX = Math.floor(ox);
       const srcY = Math.floor(oy);
 
-      if (srcX >= 0 && srcX < gridSize && srcY >= 0 && srcY < gridSize) {
+      if (srcX >= 0 && srcX < gridSize && srcY >= 0 && srcY < gridHeight) {
         newGrid[ny][nx] = layer.grid[srcY][srcX];
       }
     }
