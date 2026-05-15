@@ -222,6 +222,12 @@ body {
   color: var(--text-secondary);
 }
 
+.right-sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* ============================================================
    LAYER LIST
    ============================================================ */

@@ -29,6 +29,33 @@ export type AnimationState = {
   selectedLayerIds: string[];
 };
 
+export type HistoryContext = {
+  activeFrameIndex: number;
+  activeLayerId: string;
+  selectedLayerIds: string[];
+};
+
+export type PixelRun = {
+  y: number;
+  x: number;
+  before: (string | null)[];
+  after: (string | null)[];
+};
+
+export type LayerHistoryPatch = {
+  frameId: string;
+  layerId: string;
+  runs: PixelRun[];
+};
+
+export type HistoryEntry = {
+  id: string;
+  before: HistoryContext;
+  after: HistoryContext;
+  layerPatches: LayerHistoryPatch[];
+  changedCells: number;
+};
+
 export type ToolType =
   | 'brush' | 'eraser' | 'fill' | 'picker'
   | 'line' | 'rect' | 'circle' | 'select' | 'move'
@@ -80,8 +107,8 @@ export type TabState = {
   animState: AnimationState;
   currentColor: string;
   currentTool: ToolType;
-  undoStack: AnimationState[];
-  redoStack: AnimationState[];
+  undoStack: HistoryEntry[];
+  redoStack: HistoryEntry[];
   /** Pan position saved when switching away */
   pan: { x: number; y: number };
   pixelSize: number;

@@ -398,6 +398,7 @@ export function useCanvasApp() {
   }, [frames, activeFrameIndex, onionSkinEnabled, isPlaying, pixelSize, gridHeight, showGrid, isShowingSuggestions, suggestions]);
 
   const pushUndoSnapshot = useStore(s => s.pushUndoSnapshot);
+  const commitUndoSnapshot = useStore(s => s.commitUndoSnapshot);
 
   const getTransformAnchorLayer = useCallback(() => {
     if (selectedTransformLayers.length > 0) return selectedTransformLayers.find(layer => layer.id === activeLayerId) ?? selectedTransformLayers[0];
@@ -921,7 +922,6 @@ export function useCanvasApp() {
       return false;
     }
 
-    pushUndoSnapshot(state);
     setAnimState(prev => {
       const nextFrames = [...prev.frames];
       const currentFrame = nextFrames[prev.activeFrameIndex];
@@ -1047,7 +1047,14 @@ export function useCanvasApp() {
   const selectionFlipH = useStore(s => s.selectionFlipH);
   const selectionFlipV = useStore(s => s.selectionFlipV);
 
-  const commitSelection = () => { storeCommitSelection(); selectionDragRef.current = null; selectionResizeRef.current = null; };
+  const commitSelection = () => {
+    if (!selection) return;
+    pushUndoSnapshot(animStateRef.current);
+    storeCommitSelection();
+    commitUndoSnapshot();
+    selectionDragRef.current = null;
+    selectionResizeRef.current = null;
+  };
 
   const confirmSelection = (x0: number, y0: number, x1: number, y1: number) => {
     const minX = Math.max(0, Math.min(x0, x1));
@@ -1082,7 +1089,7 @@ export function useCanvasApp() {
   };
 
   const selectionCut = () => { if (!selection) return; selectionCopy(); setSelection(null); selectionDragRef.current = null; selectionResizeRef.current = null; };
-  const selectionPaste = () => { if (!clipboard) return; if (selection) commitSelection(); pushUndoSnapshot(animState); setSelection({ x: 0, y: 0, width: clipboard.width, height: clipboard.height, pixels: clipboard.pixels.map(r => [...r]), offsetX: 0, offsetY: 0 }); if (currentTool !== 'select') activateTool('select'); };
+  const selectionPaste = () => { if (!clipboard) return; if (selection) commitSelection(); setSelection({ x: 0, y: 0, width: clipboard.width, height: clipboard.height, pixels: clipboard.pixels.map(r => [...r]), offsetX: 0, offsetY: 0 }); if (currentTool !== 'select') activateTool('select'); };
   const selectionNewBrush = () => { if (!selection) return; const newBrush = { pixels: selection.pixels.map(r => [...r]), width: selection.width, height: selection.height }; setSavedBrushes(prev => [...prev, newBrush]); setCustomBrush(newBrush); commitSelection(); activateTool('brush'); };
   const clearCustomBrush = () => setCustomBrush(null);
 
@@ -1205,6 +1212,7 @@ export function useCanvasApp() {
         });
       }
     }
+    commitUndoSnapshot();
     resetInteractionState();
   };
 
@@ -1397,6 +1405,7 @@ export function useCanvasApp() {
   const addLayer = useStore(s => s.addLayer);
   const deleteLayer = useStore(s => s.deleteLayer);
   const renameLayer = useStore(s => s.renameLayer);
+  const mergeSelectedLayers = useStore(s => s.mergeSelectedLayers);
   const toggleLayerSelection = useStore(s => s.toggleLayerSelection);
   const handleLayerClick = useStore(s => s.handleLayerClick);
   const handleReorderLayer = useStore(s => s.handleReorderLayer);
@@ -1407,7 +1416,6 @@ export function useCanvasApp() {
     try {
       const grid = await imageBlobToGrid(result.blob, gridSize, gridHeight);
       const layerName = result.name.replace(/\.[^.]+$/, '') || 'Imported';
-      pushUndoSnapshot(animState);
       setAnimState(prev => {
         const nextLayers = [...prev.frames[prev.activeFrameIndex].layers, { id: generateId(), name: layerName, visible: true, opacity: 1, grid, transform: createDefaultTransform() }];
         const frame = { ...prev.frames[prev.activeFrameIndex], layers: nextLayers };
@@ -1568,7 +1576,6 @@ export function useCanvasApp() {
     redo: handleRedo,
     clearCanvas: () => {
       if (window.confirm('Clear the entire canvas? This cannot be undone.')) {
-        pushUndoSnapshot(animState);
         const defaultFrame = createDefaultFrame({ width: gridSize, height: gridHeight });
         setAnimState({ frames: [defaultFrame], activeFrameIndex: 0, activeLayerId: defaultFrame.layers[0].id, selectedLayerIds: [defaultFrame.layers[0].id] });
       }
@@ -1650,6 +1657,7 @@ export function useCanvasApp() {
     rightSidebar: {
       width: rightSidebarWidth, layers, activeLayerId, selectedLayerIds,
       onAddLayer: () => addLayer(layers.length, gridSize, gridHeight), onDeleteLayer: deleteLayer, onRenameLayer: renameLayer,
+      onMergeLayers: mergeSelectedLayers,
       onLayerClick: handleLayerClick, onToggleLayerSelection: toggleLayerSelection,
       onReorderLayer: handleReorderLayer,
       onResizerPointerDown: onRightResizerPointerDown,

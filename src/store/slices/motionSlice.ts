@@ -41,8 +41,6 @@ export const createMotionSlice: StateCreator<MotionSlice, [], [], MotionSlice> =
     if (suggestions.length === 0) return;
 
     const store = get() as unknown as StoreState;
-    store.pushUndoSnapshot(store.animState);
-
     const newFrames = suggestionsToFrames(suggestions, layerName, duration);
     const frames = [...store.animState.frames];
     frames.splice(suggestionStartIndex + 1, 0, ...newFrames);

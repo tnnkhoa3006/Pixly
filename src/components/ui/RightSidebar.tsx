@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { Plus, Eye, EyeOff, CheckSquare, Square, Trash2, GripVertical, Pencil } from 'lucide-react';
+import { Plus, Eye, EyeOff, CheckSquare, Square, Trash2, GripVertical, Pencil, Combine } from 'lucide-react';
 import type { Layer } from '../../types';
 import { useStore } from '../../store';
 
@@ -11,6 +11,7 @@ interface RightSidebarProps {
   onAddLayer: () => void;
   onDeleteLayer: (id: string) => void;
   onRenameLayer: (id: string, name: string) => void;
+  onMergeLayers: () => void;
   onLayerClick: (id: string, isMulti: boolean) => void;
   onToggleLayerSelection: (id: string) => void;
   onReorderLayer: (oldIndex: number, newIndex: number) => void;
@@ -19,7 +20,7 @@ interface RightSidebarProps {
 
 export default memo(function RightSidebar({
   width, layers, activeLayerId, selectedLayerIds,
-  onAddLayer, onDeleteLayer, onRenameLayer, onLayerClick, onToggleLayerSelection, onReorderLayer, onResizerPointerDown,
+  onAddLayer, onDeleteLayer, onRenameLayer, onMergeLayers, onLayerClick, onToggleLayerSelection, onReorderLayer, onResizerPointerDown,
 }: RightSidebarProps) {
   const [draggedVisualIndex, setDraggedVisualIndex] = useState<number | null>(null);
   const [dropTargetVisualIndex, setDropTargetVisualIndex] = useState<number | null>(null);
@@ -27,8 +28,12 @@ export default memo(function RightSidebar({
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
+  const draggedLayerIdRef = useRef<string | null>(null);
 
   const reversedLayers = [...layers].reverse();
+  const selectedInFrame = selectedLayerIds.filter(id => layers.some(layer => layer.id === id));
+  const activeLayerIndex = layers.findIndex(layer => layer.id === activeLayerId);
+  const canMergeLayers = selectedInFrame.length >= 2 || activeLayerIndex > 0;
 
   useEffect(() => {
     if (!editingLayerId) return;
@@ -56,7 +61,25 @@ export default memo(function RightSidebar({
       <div className="sidebar-resizer right" onPointerDown={onResizerPointerDown} />
       <div className="right-sidebar-header">
         <span>Layers</span>
-        <button className="tool-icon-btn" style={{ width: 26, height: 26 }} onClick={onAddLayer}><Plus size={14} /></button>
+        <div className="right-sidebar-actions">
+          <button
+            className="tool-icon-btn"
+            style={{ width: 26, height: 26 }}
+            onClick={onMergeLayers}
+            disabled={!canMergeLayers}
+            title={selectedInFrame.length >= 2 ? 'Merge selected layers' : 'Merge active layer down'}
+          >
+            <Combine size={14} />
+          </button>
+          <button
+            className="tool-icon-btn"
+            style={{ width: 26, height: 26 }}
+            onClick={onAddLayer}
+            title="Add Layer"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
       </div>
       <div className="layer-list">
         {reversedLayers.map((layer, visualIndex) => {
@@ -80,11 +103,14 @@ export default memo(function RightSidebar({
               onClick={(e) => onLayerClick(layer.id, e.ctrlKey || e.metaKey)}
               onDragStart={(e) => {
                 e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', layer.id);
+                draggedLayerIdRef.current = layer.id;
                 setDraggedVisualIndex(visualIndex);
               }}
               onDragOver={(e) => {
                 e.preventDefault();
-                if (draggedVisualIndex === null || draggedVisualIndex === visualIndex) return;
+                const draggedLayerId = draggedLayerIdRef.current || e.dataTransfer.getData('text/plain');
+                if (!draggedLayerId || draggedLayerId === layer.id) return;
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 setDropTargetVisualIndex(visualIndex);
                 setDropPosition(e.clientY < rect.top + rect.height / 2 ? 'top' : 'bottom');
@@ -97,18 +123,24 @@ export default memo(function RightSidebar({
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                if (draggedVisualIndex !== null && dropTargetVisualIndex !== null) {
-                  const fromReal = layers.length - 1 - draggedVisualIndex;
-                  let toReal = layers.length - 1 - dropTargetVisualIndex;
-                  if (draggedVisualIndex < dropTargetVisualIndex && dropPosition === 'top') toReal++;
-                  else if (draggedVisualIndex > dropTargetVisualIndex && dropPosition === 'bottom') toReal--;
-                  if (fromReal !== toReal) onReorderLayer(fromReal, toReal);
+                const draggedLayerId = draggedLayerIdRef.current || e.dataTransfer.getData('text/plain');
+                if (draggedLayerId && draggedLayerId !== layer.id && dropPosition) {
+                  const fromReal = layers.findIndex(item => item.id === draggedLayerId);
+                  const targetReal = layers.findIndex(item => item.id === layer.id);
+                  if (fromReal !== -1 && targetReal !== -1) {
+                    let toReal = dropPosition === 'top' ? targetReal + 1 : targetReal;
+                    if (fromReal < toReal) toReal--;
+                    toReal = Math.max(0, Math.min(toReal, layers.length - 1));
+                    if (fromReal !== toReal) onReorderLayer(fromReal, toReal);
+                  }
                 }
+                draggedLayerIdRef.current = null;
                 setDraggedVisualIndex(null);
                 setDropTargetVisualIndex(null);
                 setDropPosition(null);
               }}
               onDragEnd={() => {
+                draggedLayerIdRef.current = null;
                 setDraggedVisualIndex(null);
                 setDropTargetVisualIndex(null);
                 setDropPosition(null);
