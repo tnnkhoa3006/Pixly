@@ -3,6 +3,21 @@ import { Plus, Eye, EyeOff, CheckSquare, Square, Trash2, GripVertical, Pencil, C
 import type { Layer } from '../../types';
 import { useStore } from '../../store';
 
+type LayerDropPosition = 'top' | 'bottom';
+type LayerDropTarget = {
+  layerId: string;
+  visualIndex: number;
+  position: LayerDropPosition;
+};
+type LayerPointerDrag = {
+  layerId: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  visualIndex: number;
+  isDragging: boolean;
+};
+
 interface RightSidebarProps {
   width: number;
   layers: Layer[];
@@ -29,6 +44,11 @@ export default memo(function RightSidebar({
   const [draftName, setDraftName] = useState('');
   const editInputRef = useRef<HTMLInputElement>(null);
   const draggedLayerIdRef = useRef<string | null>(null);
+  const dropTargetLayerIdRef = useRef<string | null>(null);
+  const dropPositionRef = useRef<LayerDropPosition | null>(null);
+  const layerItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const pointerDragRef = useRef<LayerPointerDrag | null>(null);
+  const suppressClickRef = useRef(false);
 
   const reversedLayers = [...layers].reverse();
   const selectedInFrame = selectedLayerIds.filter(id => layers.some(layer => layer.id === id));
@@ -54,6 +74,125 @@ export default memo(function RightSidebar({
 
   const cancelRename = () => {
     setEditingLayerId(null);
+  };
+
+  const resetDragState = () => {
+    draggedLayerIdRef.current = null;
+    dropTargetLayerIdRef.current = null;
+    dropPositionRef.current = null;
+    pointerDragRef.current = null;
+    setDraggedVisualIndex(null);
+    setDropTargetVisualIndex(null);
+    setDropPosition(null);
+  };
+
+  const setLayerItemRef = (id: string) => (node: HTMLDivElement | null) => {
+    if (node) layerItemRefs.current.set(id, node);
+    else layerItemRefs.current.delete(id);
+  };
+
+  const getDropTargetFromPoint = (clientY: number, draggedLayerId: string): LayerDropTarget | null => {
+    const candidates = reversedLayers
+      .map((item, visualIndex) => ({
+        layerId: item.id,
+        visualIndex,
+        element: layerItemRefs.current.get(item.id),
+      }))
+      .filter((item): item is { layerId: string; visualIndex: number; element: HTMLDivElement } => Boolean(item.element));
+
+    if (candidates.length === 0) return null;
+
+    const toTarget = (
+      item: { layerId: string; visualIndex: number; element: HTMLDivElement },
+      position: LayerDropPosition,
+    ): LayerDropTarget | null => {
+      if (item.layerId === draggedLayerId) return null;
+      return { layerId: item.layerId, visualIndex: item.visualIndex, position };
+    };
+
+    for (const item of candidates) {
+      const rect = item.element.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) {
+        return toTarget(item, clientY < rect.top + rect.height / 2 ? 'top' : 'bottom');
+      }
+      if (clientY < rect.top) return toTarget(item, 'top');
+    }
+
+    return toTarget(candidates[candidates.length - 1], 'bottom');
+  };
+
+  const setDropTarget = (target: LayerDropTarget | null) => {
+    dropTargetLayerIdRef.current = target?.layerId ?? null;
+    dropPositionRef.current = target?.position ?? null;
+    setDropTargetVisualIndex(target?.visualIndex ?? null);
+    setDropPosition(target?.position ?? null);
+  };
+
+  const reorderLayer = (draggedLayerId: string, targetLayerId: string, finalDropPosition: LayerDropPosition) => {
+    if (draggedLayerId === targetLayerId) return;
+    const fromReal = layers.findIndex(item => item.id === draggedLayerId);
+    const targetReal = layers.findIndex(item => item.id === targetLayerId);
+    if (fromReal === -1 || targetReal === -1) return;
+
+    let toReal = finalDropPosition === 'top' ? targetReal + 1 : targetReal;
+    if (fromReal < toReal) toReal--;
+    toReal = Math.max(0, Math.min(toReal, layers.length - 1));
+    if (fromReal !== toReal) onReorderLayer(fromReal, toReal);
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>, layerId: string, visualIndex: number) => {
+    if (e.button !== 0 || layers.length <= 1 || editingLayerId === layerId) return;
+    if ((e.target as Element).closest('button,input,textarea,select')) return;
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pointerDragRef.current = {
+      layerId,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      visualIndex,
+      isDragging: false,
+    };
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = pointerDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.isDragging && Math.hypot(dx, dy) < 4) return;
+
+    if (!drag.isDragging) {
+      drag.isDragging = true;
+      suppressClickRef.current = true;
+      draggedLayerIdRef.current = drag.layerId;
+      setDraggedVisualIndex(drag.visualIndex);
+    }
+
+    setDropTarget(getDropTargetFromPoint(e.clientY, drag.layerId));
+    e.preventDefault();
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = pointerDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+
+    if (drag.isDragging) {
+      const target = dropTargetLayerIdRef.current && dropPositionRef.current
+        ? { layerId: dropTargetLayerIdRef.current, position: dropPositionRef.current }
+        : getDropTargetFromPoint(e.clientY, drag.layerId);
+
+      if (target) reorderLayer(drag.layerId, target.layerId, target.position);
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    resetDragState();
   };
 
   return (
@@ -91,6 +230,7 @@ export default memo(function RightSidebar({
           return (
             <div
               key={layer.id}
+              ref={setLayerItemRef(layer.id)}
               className={[
                 'layer-item',
                 isActive ? 'active' : '',
@@ -99,52 +239,17 @@ export default memo(function RightSidebar({
                 isDropTarget && dropPosition === 'top' ? 'drop-above' : '',
                 isDropTarget && dropPosition === 'bottom' ? 'drop-below' : '',
               ].filter(Boolean).join(' ')}
-              draggable={layers.length > 1 && editingLayerId !== layer.id}
-              onClick={(e) => onLayerClick(layer.id, e.ctrlKey || e.metaKey)}
-              onDragStart={(e) => {
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', layer.id);
-                draggedLayerIdRef.current = layer.id;
-                setDraggedVisualIndex(visualIndex);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                const draggedLayerId = draggedLayerIdRef.current || e.dataTransfer.getData('text/plain');
-                if (!draggedLayerId || draggedLayerId === layer.id) return;
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                setDropTargetVisualIndex(visualIndex);
-                setDropPosition(e.clientY < rect.top + rect.height / 2 ? 'top' : 'bottom');
-              }}
-              onDragLeave={() => {
-                if (dropTargetVisualIndex === visualIndex) {
-                  setDropTargetVisualIndex(null);
-                  setDropPosition(null);
+              onClick={(e) => {
+                if (suppressClickRef.current) {
+                  suppressClickRef.current = false;
+                  return;
                 }
+                onLayerClick(layer.id, e.ctrlKey || e.metaKey);
               }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const draggedLayerId = draggedLayerIdRef.current || e.dataTransfer.getData('text/plain');
-                if (draggedLayerId && draggedLayerId !== layer.id && dropPosition) {
-                  const fromReal = layers.findIndex(item => item.id === draggedLayerId);
-                  const targetReal = layers.findIndex(item => item.id === layer.id);
-                  if (fromReal !== -1 && targetReal !== -1) {
-                    let toReal = dropPosition === 'top' ? targetReal + 1 : targetReal;
-                    if (fromReal < toReal) toReal--;
-                    toReal = Math.max(0, Math.min(toReal, layers.length - 1));
-                    if (fromReal !== toReal) onReorderLayer(fromReal, toReal);
-                  }
-                }
-                draggedLayerIdRef.current = null;
-                setDraggedVisualIndex(null);
-                setDropTargetVisualIndex(null);
-                setDropPosition(null);
-              }}
-              onDragEnd={() => {
-                draggedLayerIdRef.current = null;
-                setDraggedVisualIndex(null);
-                setDropTargetVisualIndex(null);
-                setDropPosition(null);
-              }}
+              onPointerDown={(e) => handlePointerDown(e, layer.id, visualIndex)}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={resetDragState}
             >
               <div className="layer-item-top">
                 <GripVertical size={14} className="layer-grip" />

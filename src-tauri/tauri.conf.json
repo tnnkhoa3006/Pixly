@@ -1,6 +1,6 @@
 {
   "productName": "Pixly",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "identifier": "com.pixly.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
