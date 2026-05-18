@@ -1,38 +1,15 @@
-import { useState, useEffect, useRef } from 'react';
-
 interface LoadingScreenProps {
-  onComplete: () => void;
+  status?: string;
+  progress?: number | null;
 }
 
-export default function LoadingScreen({ onComplete }: LoadingScreenProps) {
-  const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState<'loading' | 'done'>('loading');
-  const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
-
-  useEffect(() => {
-    const duration = 2200;
-    const start = performance.now();
-
-    const tick = (now: number) => {
-      const elapsed = now - start;
-      const pct = Math.min(1, elapsed / duration);
-      const eased = 1 - Math.pow(1 - pct, 3);
-      setProgress(Math.round(eased * 100));
-
-      if (pct < 1) {
-        requestAnimationFrame(tick);
-      } else {
-        setPhase('done');
-        setTimeout(() => onCompleteRef.current(), 400);
-      }
-    };
-
-    requestAnimationFrame(tick);
-  }, []);
+export default function LoadingScreen({ status = 'Working...', progress = null }: LoadingScreenProps) {
+  const normalizedProgress = typeof progress === 'number'
+    ? Math.max(0, Math.min(100, Math.round(progress)))
+    : null;
 
   return (
-    <div className={`ld-screen ${phase === 'done' ? 'ld-fadeout' : ''}`}>
+    <div className="ld-screen">
       <div className="ld-content">
         <img
           src="/Pixel It loading.gif"
@@ -41,12 +18,15 @@ export default function LoadingScreen({ onComplete }: LoadingScreenProps) {
         />
         <div className="ld-text">
           <span className="ld-brand">Pixly</span>
-          <span className="ld-sub">Pixel Art Editor</span>
+          <span className="ld-sub">{status}</span>
         </div>
         <div className="ld-bar-wrap">
-          <div className="ld-bar" style={{ width: `${progress}%` }} />
+          <div
+            className={`ld-bar ${normalizedProgress === null ? 'ld-bar-indeterminate' : ''}`}
+            style={normalizedProgress === null ? undefined : { width: `${normalizedProgress}%` }}
+          />
         </div>
-        <span className="ld-pct">{progress}%</span>
+        {normalizedProgress !== null && <span className="ld-pct">{normalizedProgress}%</span>}
       </div>
     </div>
   );

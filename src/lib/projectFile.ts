@@ -97,20 +97,34 @@ export async function saveProjectToPath(
 
 // ---------- Open ----------
 
+export async function selectProjectFilePath(): Promise<string | null> {
+  if (!isTauri()) return null;
+
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const selected = await open({
+    title: 'Open Project',
+    multiple: false,
+    filters: [PIXLY_FILTER],
+  });
+  if (!selected) return null;
+  return typeof selected === 'string' ? selected : selected as unknown as string;
+}
+
+export async function readProjectFileFromPath(filePath: string): Promise<{ data: ProjectData; filePath: string }> {
+  if (!isTauri()) {
+    throw new Error('Opening recent file paths is only supported in the desktop app.');
+  }
+
+  const { readTextFile } = await import('@tauri-apps/plugin-fs');
+  const content = await readTextFile(filePath);
+  return { data: deserializeProject(content), filePath };
+}
+
 export async function openProjectFile(): Promise<{ data: ProjectData; filePath: string } | null> {
   if (isTauri()) {
-    const { open } = await import('@tauri-apps/plugin-dialog');
-    const { readTextFile } = await import('@tauri-apps/plugin-fs');
-    const selected = await open({
-      title: 'Open Project',
-      multiple: false,
-      filters: [PIXLY_FILTER],
-    });
-    if (!selected) return null;
-    const filePath = typeof selected === 'string' ? selected : selected as unknown as string;
-    const content = await readTextFile(filePath);
-    const data = deserializeProject(content);
-    return { data, filePath };
+    const filePath = await selectProjectFilePath();
+    if (!filePath) return null;
+    return readProjectFileFromPath(filePath);
   } else {
     // Web fallback
     return new Promise((resolve) => {

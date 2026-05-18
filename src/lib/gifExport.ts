@@ -287,6 +287,7 @@ export async function exportGif(
   gridSize: number,
   scale: number = 4,
   gridHeight: number = gridSize,
+  onProgress?: (progress: number, status: string) => void,
 ): Promise<Blob> {
   if (frames.length === 0) {
     throw new Error('No frames to export.');
@@ -294,12 +295,20 @@ export async function exportGif(
 
   const width = gridSize * scale;
   const height = gridHeight * scale;
+  const totalUnits = frames.length * 2 + 2;
+  let completedUnits = 0;
+  const reportProgress = (status: string) => {
+    onProgress?.(Math.min(99, Math.round((completedUnits / totalUnits) * 100)), status);
+  };
   const histogram = new Map<number, number>();
   const gridCanvasCache = new WeakMap<PixelGrid, RenderCanvas>();
   const colorCache = new Map<string, Rgba>();
 
+  reportProgress('Building GIF palette...');
   for (const frame of frames) {
     collectHistogram(renderFrameToRgbStream(frame, gridSize, gridHeight, scale, gridCanvasCache, colorCache), histogram);
+    completedUnits++;
+    reportProgress('Building GIF palette...');
     await yieldToBrowser();
   }
 
@@ -307,6 +316,8 @@ export async function exportGif(
   const table = paddedPalette(paletteInfo.palette);
   const bgIndex = getPaletteIndex(0xffffff, paletteInfo);
   const minCodeSize = Math.max(2, table.palBits);
+  completedUnits++;
+  reportProgress('Encoding GIF frames...');
 
   // ---- Header ----
   const bytes: number[] = [];
@@ -357,10 +368,13 @@ export async function exportGif(
     const compressed = lzwEncode(indices, minCodeSize);
     const blocks = subBlocks(compressed);
     for (const b of blocks) bytes.push(b);
+    completedUnits++;
+    reportProgress('Encoding GIF frames...');
     await yieldToBrowser();
   }
 
   bytes.push(0x3b);
+  onProgress?.(100, 'Finalizing GIF...');
 
   return new Blob([new Uint8Array(bytes)], { type: 'image/gif' });
 }

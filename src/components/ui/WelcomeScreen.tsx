@@ -1,15 +1,15 @@
 import { useEffect, useState, useCallback } from 'react';
 import { FolderOpen, Film, MoreHorizontal, Play, Grid3X3, Sparkles, Clock, FileImage, Info, ExternalLink, Paintbrush } from 'lucide-react';
 import { APP_DISPLAY_VERSION, APP_NAME } from '../../constants/appInfo';
-import type { GridSizeType, ProjectData } from '../../types';
+import type { GridSizeType } from '../../types';
 import { getRecentFiles, hasAutoSave, loadAutoSave, type RecentFile } from '../../lib/autoSave';
-import { openProjectFile, deserializeProject } from '../../lib/projectFile';
 
 interface WelcomeScreenProps {
   onNewProject: (size: GridSizeType) => void;
   onNewAnimation: (size: GridSizeType) => void;
-  onLoadProject: (data: ProjectData, filePath: string) => void;
-  onContinue: (data: ProjectData) => void;
+  onOpenProject: () => void;
+  onOpenRecentProject: (file: RecentFile) => void;
+  onContinue: () => void;
 }
 
 const SIZE_PRESETS: { size: number; label: string }[] = [
@@ -21,7 +21,7 @@ const SIZE_PRESETS: { size: number; label: string }[] = [
 const MAX_SIZE = 1024;
 const MAX_AREA = 1024 * 1024;
 
-export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProject, onContinue }: WelcomeScreenProps) {
+export default function WelcomeScreen({ onNewProject, onNewAnimation, onOpenProject, onOpenRecentProject, onContinue }: WelcomeScreenProps) {
   const [hasAuto, setHasAuto] = useState(false);
   const [autoSaveDate, setAutoSaveDate] = useState<string | null>(null);
   const [recentFiles, setRecentFiles] = useState<RecentFile[]>([]);
@@ -51,19 +51,9 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
     })();
   }, []);
 
-  const handleContinue = async () => {
-    const data = await loadAutoSave();
-    if (data) onContinue(data);
-  };
-
   const handleOpen = useCallback(async () => {
-    try {
-      const result = await openProjectFile();
-      if (result) onLoadProject(result.data, result.filePath);
-    } catch (err) {
-      alert(`Error opening file: ${(err as Error).message}`);
-    }
-  }, [onLoadProject]);
+    onOpenProject();
+  }, [onOpenProject]);
 
   const getGridSize = (): GridSizeType | null => {
     if (!isCustom) return selectedPreset;
@@ -126,7 +116,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
         <div className="welcome-sidebar">
           <div className="welcome-sidebar-top">
             {hasAuto && (
-              <button className="welcome-sidebar-btn welcome-sidebar-btn-accent" onClick={handleContinue}>
+              <button className="welcome-sidebar-btn welcome-sidebar-btn-accent" onClick={onContinue}>
                 <Play size={14} className="welcome-sidebar-icon" />
                 <span className="welcome-sidebar-label">
                   Continue
@@ -254,18 +244,7 @@ export default function WelcomeScreen({ onNewProject, onNewAnimation, onLoadProj
                 <button
                   key={i}
                   className="welcome-recent-item"
-                  onClick={() => {
-                    (async () => {
-                      try {
-                        const { readTextFile } = await import('@tauri-apps/plugin-fs');
-                        const content = await readTextFile(file.filePath);
-                        const data = deserializeProject(content);
-                        onLoadProject(data, file.filePath);
-                      } catch {
-                        alert(`Could not open: ${file.name}`);
-                      }
-                    })();
-                  }}
+                  onClick={() => onOpenRecentProject(file)}
                 >
                   <div className="welcome-recent-thumb">
                     <FileImage size={14} />

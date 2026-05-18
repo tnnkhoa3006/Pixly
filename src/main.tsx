@@ -21,7 +21,7 @@ const completeStartupSplash = async () => {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {isStartupSplash ? (
-      <SplashScreen standalone onComplete={completeStartupSplash} />
+      <SplashScreen standalone />
     ) : (
       <AppErrorBoundary>
         <App />
@@ -29,3 +29,9 @@ createRoot(document.getElementById('root')!).render(
     )}
   </StrictMode>,
 )
+
+if (!isStartupSplash) {
+  window.setTimeout(() => {
+    void completeStartupSplash();
+  }, 0);
+}

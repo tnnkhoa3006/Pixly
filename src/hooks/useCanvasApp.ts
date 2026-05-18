@@ -7,9 +7,9 @@ import { exportFrameAsImage, getFormatOption } from '../lib/imageExport';
 import { rasterizeGeometry, rasterizeLine, type GeometryTool, type Point } from '../lib/drawing';
 import { generateId, createDefaultFrame, createDefaultTransform, bakeLayerTransform, resizePixels } from '../lib/frameHelpers';
 import { createNewTab, tabFromProjectData } from '../lib/tabHelpers';
-import { saveProjectAs, saveProjectToPath, openProjectFile, deserializeProject } from '../lib/projectFile';
+import { saveProjectAs, saveProjectToPath, openProjectFile, deserializeProject, selectProjectFilePath, readProjectFileFromPath } from '../lib/projectFile';
 import { openImageFile, imageBlobToGrid } from '../lib/imageImport';
-import { autoSaveProject, addRecentFile } from '../lib/autoSave';
+import { autoSaveProject, addRecentFile, loadAutoSave, type RecentFile } from '../lib/autoSave';
 import { splitLayer as splitLayerIntoParts, type LayerSplitPayload } from '../lib/layerSplit';
 import type { AnimationState, ToolType, CutMode, GridSizeType, Layer, LayerTransform, ProjectData, TabState, Frame } from '../types';
 import type { MenuConfig, ActionMap } from '../components/menu/MenuBar/types';
@@ -26,6 +26,12 @@ import { PIXEL_FONT } from '../lib/pixelFont';
 
 const AUTOSAVE_IDLE_DELAY_MS = 3000;
 const AUTOSAVE_MAX_WAIT_MS = 12000;
+
+const waitForPaint = () => new Promise<void>((resolve) => {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => resolve());
+  });
+});
 
 export function useCanvasApp() {
   // UI state from Zustand store
@@ -80,6 +86,10 @@ export function useCanvasApp() {
   const [gridHeight, setGridHeight] = useState(16);
   const [showExportFrameDialog, setShowExportFrameDialog] = useState(false);
   const [isExportingGif, setIsExportingGif] = useState(false);
+  const [gifExportStatus, setGifExportStatus] = useState('Exporting GIF...');
+  const [gifExportProgress, setGifExportProgress] = useState<number | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState('Preparing workspace...');
+  const [loadingProgress, setLoadingProgress] = useState<number | null>(null);
 
   const getGifExportScale = (width: number, height: number = width) => Math.max(1, Math.min(8, Math.floor(1200 / Math.max(1, width, height))));
 
@@ -145,7 +155,6 @@ export function useCanvasApp() {
   const pixelSizeRef = useRef(pixelSize);
   pixelSizeRef.current = pixelSize;
   const hasCentered = useRef(false);
-  const pendingTransition = useRef<(() => void) | null>(null);
   const isPanning = useRef(false);
   const lastPanPoint = useRef<{ x: number, y: number } | null>(null);
   const isSpaceDown = useRef(false);
@@ -225,16 +234,35 @@ export function useCanvasApp() {
       let data: ProjectData;
       let resolvedPath: string;
       if (filePath) {
-        const { readTextFile } = await import('@tauri-apps/plugin-fs');
-        const content = await readTextFile(filePath);
-        data = deserializeProject(content);
-        resolvedPath = filePath;
+        setLoadingStatus('Reading project file...');
+        setLoadingProgress(null);
+        setShowLoading(true);
+        await waitForPaint();
+        const result = await readProjectFileFromPath(filePath);
+        data = result.data;
+        resolvedPath = result.filePath;
+      } else if ('__TAURI_INTERNALS__' in window) {
+        const selectedPath = await selectProjectFilePath();
+        if (!selectedPath) return;
+        setLoadingStatus('Reading project file...');
+        setLoadingProgress(null);
+        setShowLoading(true);
+        await waitForPaint();
+        const result = await readProjectFileFromPath(selectedPath);
+        data = result.data;
+        resolvedPath = result.filePath;
       } else {
+        setLoadingStatus('Choose a project file...');
+        setLoadingProgress(null);
+        setShowLoading(true);
+        await waitForPaint();
         const result = await openProjectFile();
         if (!result) return;
         data = result.data;
         resolvedPath = result.filePath;
       }
+      setLoadingStatus('Loading project data...');
+      setLoadingProgress(null);
       setTabs(prev => {
         const existing = prev.find(t => t.filePath === resolvedPath);
         if (existing) {
@@ -256,10 +284,16 @@ export function useCanvasApp() {
         const flushed = prev.map(t => t.id === activeTabId ? snapshotWorkspaceTab(t) : t);
         return [...flushed, newTab];
       });
+      setLoadingStatus('Ready');
+      setLoadingProgress(100);
+      await waitForPaint();
     } catch (err) {
       alert(`Open failed: ${(err as Error).message}`);
+    } finally {
+      setShowLoading(false);
+      setLoadingProgress(null);
     }
-  }, [activeTabId, restoreWorkspaceFromTab, setActiveTabId, setSelection, setTabs, snapshotWorkspaceTab]);
+  }, [activeTabId, restoreWorkspaceFromTab, setActiveTabId, setSelection, setShowLoading, setTabs, snapshotWorkspaceTab]);
 
   const addNewTab = useCallback((size: GridSizeType = 32, name = 'Untitled') => {
     const newTab = createNewTab(size, name);
@@ -1195,8 +1229,7 @@ export function useCanvasApp() {
     }
     selectionDragRef.current = null; selectionResizeRef.current = null;
     if (isDrawing.current && isFrameTransformTool(tool)) {
-      const shouldBake = tool === 'frame-move' || !animationMode;
-      if (shouldBake) {
+      if (!animationMode) {
         setAnimState(prev => {
           const activeIdx = prev.activeFrameIndex;
           const frame = { ...prev.frames[activeIdx] };
@@ -1427,28 +1460,47 @@ export function useCanvasApp() {
   handleImportImageRef.current = handleImportImage;
 
   const handleExportGif = async () => {
+    setGifExportStatus('Preparing GIF...');
+    setGifExportProgress(0);
     setIsExportingGif(true);
-    await new Promise(r => setTimeout(r, 0)); // yield to let loading overlay render
+    await waitForPaint();
     try {
-      const blob = await exportGif(frames, gridSize, getGifExportScale(gridSize, gridHeight), gridHeight);
+      const blob = await exportGif(
+        frames,
+        gridSize,
+        getGifExportScale(gridSize, gridHeight),
+        gridHeight,
+        (progress, status) => {
+          setGifExportProgress(progress);
+          setGifExportStatus(status);
+        },
+      );
       if ('__TAURI_INTERNALS__' in window) {
         const { save } = await import('@tauri-apps/plugin-dialog');
         const { writeFile } = await import('@tauri-apps/plugin-fs');
+        setGifExportStatus('Choose save location...');
+        setGifExportProgress(100);
         const filePath = await save({
           title: 'Export GIF',
           filters: [{ name: 'GIF Image', extensions: ['gif'] }],
           defaultPath: 'animation.gif',
         });
-        if (!filePath) { setIsExportingGif(false); return; }
+        if (!filePath) return;
+        setGifExportStatus('Writing GIF file...');
         const bytes = new Uint8Array(await blob.arrayBuffer());
         await writeFile(filePath, bytes);
       } else {
+        setGifExportStatus('Preparing download...');
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = 'animation.gif'; a.click();
         URL.revokeObjectURL(url);
       }
     } catch (error) { window.alert(error instanceof Error ? error.message : 'Failed to export GIF.'); }
-    setIsExportingGif(false);
+    finally {
+      setIsExportingGif(false);
+      setGifExportProgress(null);
+      setGifExportStatus('Exporting GIF...');
+    }
   };
 
   const handleExportFrameConfirm = async (frameIndices: number[], format: string) => {
@@ -1611,24 +1663,109 @@ export function useCanvasApp() {
   };
 
   // Welcome screen handlers
-  const handleTransition = (action: () => void) => {
-    pendingTransition.current = action;
-    setShowWelcome(false);
+  const runWithLoading = useCallback(async (
+    initialStatus: string,
+    task: (setStep: (status: string, progress?: number | null) => void) => void | Promise<void>,
+  ) => {
+    const setStep = (status: string, progress: number | null = null) => {
+      setLoadingStatus(status);
+      setLoadingProgress(progress);
+    };
+
+    setStep(initialStatus, null);
     setShowLoading(true);
+    await waitForPaint();
+
+    try {
+      await task(setStep);
+      setStep('Ready', 100);
+      await waitForPaint();
+    } catch (error) {
+      console.error('Loading transition failed:', error);
+      window.alert(error instanceof Error ? error.message : 'Operation failed.');
+    } finally {
+      setShowLoading(false);
+      setLoadingProgress(null);
+    }
+  }, [setShowLoading]);
+
+  const handleTransition = (initialStatus: string, action: () => void | Promise<void>) => {
+    void runWithLoading(initialStatus, async (setStep) => {
+      setStep(initialStatus, null);
+      await waitForPaint();
+      await action();
+      setStep('Finalizing workspace...', null);
+    });
   };
 
-  const welcomeHandlers = {
-    onNewProject: (size: GridSizeType) => handleTransition(() => addNewTab(size)),
-    onNewAnimation: (size: GridSizeType) => handleTransition(() => { addNewTab(size); setAnimationTabPinned(true); setActiveView('animation'); setAnimationMode(true); }),
-    onLoadProject: (data: ProjectData, filePath: string) => handleTransition(() => loadProjectData(data, filePath)),
-    onContinue: (data: any) => handleTransition(() => {
+  const openProjectFromPicker = async () => {
+    try {
+      if ('__TAURI_INTERNALS__' in window) {
+        const filePath = await selectProjectFilePath();
+        if (!filePath) return;
+
+        await runWithLoading('Opening project...', async (setStep) => {
+          setStep('Reading project file...', null);
+          const result = await readProjectFileFromPath(filePath);
+          setStep('Loading project data...', null);
+          loadProjectData(result.data, result.filePath);
+          setStep('Finalizing workspace...', null);
+        });
+        return;
+      }
+
+      await runWithLoading('Opening project...', async (setStep) => {
+        setStep('Choose a project file...', null);
+        const result = await openProjectFile();
+        if (!result) return;
+        setStep('Loading project data...', null);
+        loadProjectData(result.data, result.filePath);
+        setStep('Finalizing workspace...', null);
+      });
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Open failed.');
+    }
+  };
+
+  const openRecentProject = (file: RecentFile) => {
+    void runWithLoading('Opening project...', async (setStep) => {
+      try {
+        setStep('Reading project file...', null);
+        const result = await readProjectFileFromPath(file.filePath);
+        setStep('Loading project data...', null);
+        loadProjectData(result.data, result.filePath);
+        setStep('Finalizing workspace...', null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Could not open ${file.name}: ${message}`);
+      }
+    });
+  };
+
+  const continueAutosaveProject = () => {
+    void runWithLoading('Restoring autosave...', async (setStep) => {
+      setStep('Reading autosave...', null);
+      const data = await loadAutoSave();
+      if (!data) throw new Error('No autosave project was found.');
+
+      setStep('Loading workspace...', null);
       const newTab = createNewTab({ width: data.canvas.width, height: data.canvas.height ?? data.canvas.width }, 'Autosave');
       const loaded: TabState = { ...newTab, animState: data.animState, currentColor: data.currentColor, currentTool: data.currentTool };
       setTabs([loaded]); setActiveTabId(loaded.id);
       restoreWorkspaceFromTab(loaded);
       panRef.current = { x: 0, y: 0 };
       hasCentered.current = false;
-    }),
+      setShowWelcome(false);
+      setStep('Finalizing workspace...', null);
+    });
+  };
+
+  const welcomeHandlers = {
+    onNewProject: (size: GridSizeType) => handleTransition('Creating project...', () => { addNewTab(size); setShowWelcome(false); }),
+    onNewAnimation: (size: GridSizeType) => handleTransition('Creating animation...', () => { addNewTab(size); setAnimationTabPinned(true); setActiveView('animation'); setAnimationMode(true); setShowWelcome(false); }),
+    onOpenProject: () => { void openProjectFromPicker(); },
+    onOpenRecentProject: openRecentProject,
+    onContinue: continueAutosaveProject,
   };
 
   // Sidebar resizer handlers
@@ -1700,8 +1837,11 @@ export function useCanvasApp() {
       updateAvailable, isUpdating, updateError, installUpdate,
       showOnboarding, setShowOnboarding,
       showLoading, setShowLoading,
-      onLoadingComplete: () => { setShowLoading(false); pendingTransition.current?.(); pendingTransition.current = null; },
+      loadingStatus,
+      loadingProgress,
       isExportingGif,
+      gifExportStatus,
+      gifExportProgress,
     },
     animation: {
       animationMode, gridSize, gridHeight, isPlaying, activeFrameIndex,

@@ -1,58 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
-
 interface SplashScreenProps {
-  onComplete: () => void;
   standalone?: boolean;
 }
 
-export default function SplashScreen({ onComplete, standalone = false }: SplashScreenProps) {
-  const [progress, setProgress] = useState(0);
-  const [phase, setPhase] = useState<'loading' | 'done'>('loading');
-  const onCompleteRef = useRef(onComplete);
-  const hasCompletedRef = useRef(false);
-
-  useEffect(() => {
-    onCompleteRef.current = onComplete;
-  }, [onComplete]);
-
-  useEffect(() => {
-    const duration = 2500;
-    const start = performance.now();
-    let frameId = 0;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let cancelled = false;
-
-    const tick = (now: number) => {
-      if (cancelled) return;
-
-      const elapsed = now - start;
-      const pct = Math.min(1, elapsed / duration);
-      const eased = 1 - Math.pow(1 - pct, 3);
-      setProgress(Math.round(eased * 100));
-
-      if (pct < 1) {
-        frameId = requestAnimationFrame(tick);
-      } else {
-        setPhase('done');
-        timeoutId = setTimeout(() => {
-          if (hasCompletedRef.current) return;
-          hasCompletedRef.current = true;
-          onCompleteRef.current();
-        }, 400);
-      }
-    };
-
-    frameId = requestAnimationFrame(tick);
-
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(frameId);
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, []);
-
+export default function SplashScreen({ standalone = false }: SplashScreenProps) {
   return (
-    <div className={`sp-screen ${standalone ? 'sp-standalone' : ''} ${phase === 'done' ? 'sp-fadeout' : ''}`}>
+    <div className={`sp-screen ${standalone ? 'sp-standalone' : ''}`}>
       <div className="sp-window">
         {/* Left panel - Pokemon GIF */}
         <div className="sp-left">
@@ -75,9 +27,9 @@ export default function SplashScreen({ onComplete, standalone = false }: SplashS
             <span className="sp-sub">Pixel Art Editor</span>
           </div>
           <div className="sp-bar-wrap">
-            <div className="sp-bar" style={{ width: `${progress}%` }} />
+            <div className="sp-bar sp-bar-indeterminate" />
           </div>
-          <span className="sp-pct">{progress}%</span>
+          <span className="sp-pct">Starting...</span>
         </div>
       </div>
     </div>

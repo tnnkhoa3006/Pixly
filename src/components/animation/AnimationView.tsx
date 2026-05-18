@@ -6,6 +6,19 @@ import {
 import type { Frame } from '../../types';
 import { useStore } from '../../store';
 
+type FrameDropPosition = 'left' | 'right';
+type FrameDropTarget = {
+  index: number;
+  position: FrameDropPosition;
+};
+type FramePointerDrag = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  index: number;
+  isDragging: boolean;
+};
+
 // ─── Thumbnail size for the preview strip ───────────────────
 const THUMB_W = 64;
 const PREVIEW_SIZE = 180; // preview canvas logical size
@@ -81,17 +94,17 @@ function renderToCanvas(
 // ─── Frame thumbnail ─────────────────────────────────────────
 const FrameThumb = memo(({
   frame, index, isActive, gridSize, gridHeight = gridSize, isDragging, dropTarget, draggable, compact,
-  onClick, onDragStart, onDragOver, onDragLeave, onDrop, onDragEnd,
+  onClick, onPointerDown, onPointerMove, onPointerUp, onPointerCancel, setFrameRef,
 }: {
   frame: Frame; index: number; isActive: boolean; gridSize: number; gridHeight?: number;
   isDragging: boolean; dropTarget: 'left' | 'right' | null; draggable: boolean;
   compact: boolean;
   onClick: () => void;
-  onDragStart: (e: React.DragEvent) => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDragLeave: () => void;
-  onDrop: (e: React.DragEvent) => void;
-  onDragEnd: () => void;
+  onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerCancel: (e: React.PointerEvent<HTMLDivElement>) => void;
+  setFrameRef: (node: HTMLDivElement | null) => void;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -100,14 +113,14 @@ const FrameThumb = memo(({
 
   return (
     <div
+      ref={setFrameRef}
       className={`av-frame-thumb ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${compact ? 'compact' : ''} ${dropTarget === 'left' ? 'drop-target-left' : ''} ${dropTarget === 'right' ? 'drop-target-right' : ''}`}
       onClick={onClick}
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-      onDragEnd={onDragEnd}
+      draggable={false}
+      onPointerDown={draggable ? onPointerDown : undefined}
+      onPointerMove={draggable ? onPointerMove : undefined}
+      onPointerUp={draggable ? onPointerUp : undefined}
+      onPointerCancel={draggable ? onPointerCancel : undefined}
     >
       <div className="av-frame-num">{index + 1}</div>
       {!compact && <canvas ref={canvasRef} className="av-frame-canvas" />}
@@ -232,7 +245,12 @@ export default function AnimationView({
   // Frame drag-and-drop
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
-  const [dropPosition, setDropPosition] = useState<'left' | 'right' | null>(null);
+  const [dropPosition, setDropPosition] = useState<FrameDropPosition | null>(null);
+  const dropTargetIndexRef = useRef<number | null>(null);
+  const dropPositionRef = useRef<FrameDropPosition | null>(null);
+  const frameItemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const pointerFrameDragRef = useRef<FramePointerDrag | null>(null);
+  const suppressFrameClickRef = useRef(false);
 
   // Timeline zoom
   const [zoomLevel, setZoomLevel] = useState(1.0);
@@ -265,6 +283,114 @@ export default function AnimationView({
       else if (e.deltaY < 0 || e.deltaX < 0) goPrev();
     }
   }, [goNext, goPrev]);
+
+  const resetFrameDragState = () => {
+    pointerFrameDragRef.current = null;
+    dropTargetIndexRef.current = null;
+    dropPositionRef.current = null;
+    setDraggedIndex(null);
+    setDropTargetIndex(null);
+    setDropPosition(null);
+    document.body.style.cursor = '';
+  };
+
+  const setFrameItemRef = (id: string) => (node: HTMLDivElement | null) => {
+    if (node) frameItemRefs.current.set(id, node);
+    else frameItemRefs.current.delete(id);
+  };
+
+  const setFrameDropTarget = (target: FrameDropTarget | null) => {
+    dropTargetIndexRef.current = target?.index ?? null;
+    dropPositionRef.current = target?.position ?? null;
+    setDropTargetIndex(target?.index ?? null);
+    setDropPosition(target?.position ?? null);
+  };
+
+  const getFrameDropTargetFromPoint = (clientX: number, sourceIndex: number): FrameDropTarget | null => {
+    const candidates = frames
+      .map((frame, index) => ({
+        index,
+        element: frameItemRefs.current.get(frame.id),
+      }))
+      .filter((item): item is { index: number; element: HTMLDivElement } => Boolean(item.element));
+
+    if (candidates.length === 0) return null;
+
+    for (const item of candidates) {
+      const rect = item.element.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right) {
+        if (item.index === sourceIndex) return null;
+        return { index: item.index, position: clientX < rect.left + rect.width / 2 ? 'left' : 'right' };
+      }
+      if (clientX < rect.left) {
+        if (item.index === sourceIndex) return null;
+        return { index: item.index, position: 'left' };
+      }
+    }
+
+    const last = candidates[candidates.length - 1];
+    if (last.index === sourceIndex) return null;
+    return { index: last.index, position: 'right' };
+  };
+
+  const reorderFrameByDropTarget = (sourceIndex: number, target: FrameDropTarget) => {
+    let nextIndex = target.position === 'left' ? target.index : target.index + 1;
+    if (sourceIndex < nextIndex) nextIndex--;
+    nextIndex = Math.max(0, Math.min(frames.length - 1, nextIndex));
+    if (sourceIndex !== nextIndex) onReorderFrame(sourceIndex, nextIndex);
+  };
+
+  const handleFramePointerDown = (e: React.PointerEvent<HTMLDivElement>, index: number) => {
+    if (e.button !== 0 || isPlaying || frames.length <= 1) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pointerFrameDragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      index,
+      isDragging: false,
+    };
+  };
+
+  const handleFramePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = pointerFrameDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.isDragging && Math.hypot(dx, dy) < 4) return;
+
+    if (!drag.isDragging) {
+      drag.isDragging = true;
+      suppressFrameClickRef.current = true;
+      setDraggedIndex(drag.index);
+      document.body.style.cursor = 'grabbing';
+    }
+
+    setFrameDropTarget(getFrameDropTargetFromPoint(e.clientX, drag.index));
+    e.preventDefault();
+  };
+
+  const handleFramePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = pointerFrameDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+
+    if (drag.isDragging) {
+      const target = dropTargetIndexRef.current !== null && dropPositionRef.current
+        ? { index: dropTargetIndexRef.current, position: dropPositionRef.current }
+        : getFrameDropTargetFromPoint(e.clientX, drag.index);
+
+      if (target) reorderFrameByDropTarget(drag.index, target);
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    resetFrameDragState();
+  };
 
   // Timeline ruler: total duration with adaptive step
   const totalDuration = frames.reduce((s, f) => s + f.duration, 0);
@@ -404,27 +530,18 @@ export default function AnimationView({
               dropTarget={dropTargetIndex === i ? dropPosition : null}
               draggable={!isPlaying && frames.length > 1}
               compact={zoomLevel < 0.7}
-              onClick={() => !isPlaying && onSelectFrame(i)}
-              onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; setDraggedIndex(i); }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                if (draggedIndex === null || draggedIndex === i) return;
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                setDropTargetIndex(i);
-                setDropPosition(e.clientX < rect.left + rect.width / 2 ? 'left' : 'right');
-              }}
-              onDragLeave={() => { setDropTargetIndex(null); setDropPosition(null); }}
-              onDrop={(e) => {
-                e.preventDefault();
-                if (draggedIndex !== null && dropTargetIndex !== null) {
-                  let ni = dropTargetIndex;
-                  if (draggedIndex < dropTargetIndex && dropPosition === 'left') ni--;
-                  else if (draggedIndex > dropTargetIndex && dropPosition === 'right') ni++;
-                  onReorderFrame(draggedIndex, ni);
+              setFrameRef={setFrameItemRef(frame.id)}
+              onClick={() => {
+                if (suppressFrameClickRef.current) {
+                  suppressFrameClickRef.current = false;
+                  return;
                 }
-                setDraggedIndex(null); setDropTargetIndex(null); setDropPosition(null);
+                if (!isPlaying) onSelectFrame(i);
               }}
-              onDragEnd={() => { setDraggedIndex(null); setDropTargetIndex(null); setDropPosition(null); }}
+              onPointerDown={(e) => handleFramePointerDown(e, i)}
+              onPointerMove={handleFramePointerMove}
+              onPointerUp={handleFramePointerUp}
+              onPointerCancel={resetFrameDragState}
             />
           ))}
           {/* Add frame button at end */}

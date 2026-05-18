@@ -25,6 +25,12 @@ export default function App() {
     return (
       <div className="app-root-container">
         <WelcomeScreen {...app.welcomeHandlers} />
+        {app.overlays.showLoading && (
+          <LoadingScreen
+            status={app.overlays.loadingStatus}
+            progress={app.overlays.loadingProgress}
+          />
+        )}
       </div>
     );
   }
@@ -88,20 +94,9 @@ export default function App() {
 
       {ov.updateAvailable && <UpdateToast updateAvailable={ov.updateAvailable} isUpdating={ov.isUpdating} updateError={ov.updateError} onInstall={ov.installUpdate} />}
       {ov.showOnboarding && <OnboardingGuide onComplete={() => ov.setShowOnboarding(false)} />}
-      {ov.showLoading && <LoadingScreen onComplete={ov.onLoadingComplete} />}
+      {ov.showLoading && <LoadingScreen status={ov.loadingStatus} progress={ov.loadingProgress} />}
       {ov.isExportingGif && (
-        <div className="ld-screen" style={{ cursor: 'wait' }}>
-          <div className="ld-content">
-            <img src="/Pixel It loading.gif" alt="Loading" className="ld-gif ld-gif-main" />
-            <div className="ld-text">
-              <span className="ld-brand">Pixly</span>
-              <span className="ld-sub">Exporting GIF...</span>
-            </div>
-            <div className="ld-bar-wrap">
-              <div className="ld-bar ld-bar-indeterminate" />
-            </div>
-          </div>
-        </div>
+        <LoadingScreen status={ov.gifExportStatus} progress={ov.gifExportProgress} />
       )}
       {app.tabs.showBrushPopup && <BrushPopup {...app.brushPopup} />}
       {app.tabs.showCutPopup && <CutPopup {...app.cutPopup} />}
